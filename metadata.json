@@ -1,0 +1,6 @@
+{
+  "name": "PDF Slide Explainer",
+  "description": "Upload lecture slide PDFs and generate structured detailed notes, intuition, and examples mapped to each slide in an overlay view.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
