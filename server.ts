@@ -14,7 +14,6 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize GoogleGenAI server-side
-const apiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({
   apiKey: apiKey || "",
   httpOptions: {
@@ -34,11 +33,11 @@ app.post("/api/explain-pdf", async (req, res) => {
        return;
     }
 
-    // Determine the API key to use
-    const activeApiKey = customApiKey ? customApiKey.trim() : process.env.GEMINI_API_KEY;
+    // Require user-provided API key — no server-side fallback
+    const activeApiKey = customApiKey ? customApiKey.trim() : null;
     if (!activeApiKey) {
-       res.status(400).json({ 
-        error: "No Gemini API Key is available. Please enter your custom Gemini API key in the setup panel or configure GEMINI_API_KEY on the server." 
+      res.status(400).json({
+        error: "A Gemini API key is required. Enter yours in the settings panel."
       });
       return;
     }
@@ -276,10 +275,10 @@ app.post("/api/subchat", async (req, res) => {
     }
 
     // Determine API Key
-    const activeApiKey = customApiKey ? customApiKey.trim() : process.env.GEMINI_API_KEY;
+    const activeApiKey = customApiKey ? customApiKey.trim() : null;
     if (!activeApiKey) {
-      res.status(400).json({ 
-        error: "No Gemini API Key is available. Please enter your custom Gemini API key." 
+      res.status(400).json({
+        error: "A Gemini API key is required. Enter yours in the settings panel."
       });
       return;
     }

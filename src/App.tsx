@@ -282,6 +282,10 @@ export default function App() {
   // Submit base64 PDF and prompts to server-side Gemini endpoint for a specific slide range
   const handleGenerateNotesForRange = async (start: number, _end?: number) => {
     if (!pdfBase64) return;
+    if (!customApiKey?.trim()) {
+      setError("Enter your Gemini API key in settings before generating notes.");
+      return;
+    }
 
     setIsAnalyzing(true);
     setError(null);
@@ -329,7 +333,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Something went wrong while talking to Gemini. Please try again.");
+      const msg = err.message || "Something went wrong. Please try again.";
+      setError(msg);
     } finally {
       setIsAnalyzing(false);
     }
@@ -490,6 +495,13 @@ export default function App() {
             </div>
 
             <form onSubmit={handleGenerateNotes} className="space-y-6">
+              {/* Error display — always at the top */}
+              {error && (
+                <div className="flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-400" />
+                  <span>{error}</span>
+                </div>
+              )}
               {/* Drag and Drop Container */}
               <div
                 onDragEnter={handleDrag}
@@ -564,18 +576,18 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label htmlFor="custom-api-key" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Custom Gemini API Key (Optional)
+                      Gemini API Key <span className="text-rose-400">*</span>
                     </label>
                     <input
                       id="custom-api-key"
                       type="password"
-                      placeholder="Enter custom key... (uses server key if blank)"
+                      placeholder="AIza..."
                       value={customApiKey}
                       onChange={(e) => setCustomApiKey(e.target.value)}
-                      className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 placeholder:text-slate-600"
+                      className={`w-full text-xs bg-slate-950 border rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 placeholder:text-slate-600 ${!customApiKey.trim() ? "border-rose-500/50" : "border-slate-800"}`}
                     />
                     <span className="text-[9px] text-slate-500 block leading-tight">
-                      Stored locally in your browser. Leave blank to run automatically under our free server key.
+                      Required. Stored locally in your browser only.
                     </span>
                   </div>
 
@@ -734,7 +746,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   type="submit"
-                  disabled={!pdfBase64 || isAnalyzing}
+                  disabled={!pdfBase64 || isAnalyzing || !customApiKey.trim()}
                   id="generate-notes-btn"
                   className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-indigo-600/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
                 >
@@ -755,13 +767,7 @@ export default function App() {
                 )}
               </div>
 
-              {/* Error display */}
-              {error && (
-                <div className="flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3 text-xs text-rose-300">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-400" />
-                  <span>{error}</span>
-                </div>
-              )}
+              {/* Error display — removed from bottom, now at top */}
             </form>
           </div>
         ) : (
