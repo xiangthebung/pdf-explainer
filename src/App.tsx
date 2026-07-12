@@ -49,7 +49,7 @@ export default function App() {
   const [customApiKey, setCustomApiKey] = useState<string>(() => {
     return localStorage.getItem("slidesage_custom_api_key") || "";
   });
-  const [selectedModel, setSelectedModel] = useState<string>("gemini-3.5-flash");
+  const [selectedModel, setSelectedModel] = useState<string>("gemini-2.5-flash-exp");
   const [customModelId, setCustomModelId] = useState<string>(() => {
     return localStorage.getItem("slidesage_custom_model_id") || "gemini-3.5-flash";
   });
@@ -65,7 +65,7 @@ export default function App() {
   const [currentSubchatInput, setCurrentSubchatInput] = useState<string>("");
   const [isSubchatSending, setIsSubchatSending] = useState<boolean>(false);
   const [subchatError, setSubchatError] = useState<string | null>(null);
-  const [subchatModel, setSubchatModel] = useState<string>("gemini-2.5-flash");
+  const [subchatModel, setSubchatModel] = useState<string>("gemini-2.5-flash-exp");
   const [showQuiz, setShowQuiz] = useState<{ [slideNumber: number]: boolean }>({});
 
   // Floating panel drag/resize state
@@ -191,12 +191,14 @@ export default function App() {
 
   // Loading messages to cycle through during analysis (completely clean and professional)
   const loadingMessages = [
-    "Analyzing document layout and hierarchy...",
-    "Extracting core concepts and structural data...",
-    "Synthesizing high-level lecture notes...",
-    "Developing educational analogies and metaphors...",
-    "Formulating contextual real-world examples...",
-    "Mapping note sections to corresponding slides..."
+    "Reading slide layout...",
+    "Extracting concepts...",
+    "Building lecture notes...",
+    "Crafting analogies...",
+    "Generating examples...",
+    "Mapping notes to slides...",
+    "Writing quiz questions...",
+    "Finalizing explanations..."
   ];
 
   // Cycle loading messages during analysis
@@ -205,7 +207,7 @@ export default function App() {
     if (isAnalyzing) {
       interval = setInterval(() => {
         setLoadingMessageIndex((prev) => (prev + 1) % loadingMessages.length);
-      }, 3000);
+      }, 7000);
     } else {
       setLoadingMessageIndex(0);
     }
@@ -218,7 +220,7 @@ export default function App() {
     if (isAnalyzing) {
       setAnalysisProgress(0);
       const startTime = Date.now();
-      const duration = 15000; // 15 seconds estimate
+      const duration = 60000; // 60 seconds estimate — AI calls take a while
       intervalId = setInterval(() => {
         const elapsed = Date.now() - startTime;
         const percent = Math.min((elapsed / duration) * 100, 95); // cap at 95% until complete
@@ -228,7 +230,7 @@ export default function App() {
       setAnalysisProgress(100);
     }
     return () => clearInterval(intervalId);
-  }, [isAnalyzing]);
+  }, [isAnalyzing, loadingMessages.length]);
 
   // Read file and convert to base64 helper
   const handleFile = (file: File) => {
@@ -316,7 +318,7 @@ export default function App() {
       // Track all slide numbers from data.startSlide to data.endSlide as processed
       const updatedProcessed = { ...processedSlides };
       const actualStart = data.startSlide || start;
-      const actualEnd = data.endSlide || end;
+      const actualEnd = data.endSlide || start;
       for (let i = actualStart; i <= actualEnd; i++) {
         updatedProcessed[i] = true;
       }
@@ -579,7 +581,7 @@ export default function App() {
 
                   <div className="space-y-1.5">
                     <label htmlFor="selected-model" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Select Model
+                      Model
                     </label>
                     <select
                       id="selected-model"
@@ -587,29 +589,27 @@ export default function App() {
                       onChange={(e) => setSelectedModel(e.target.value)}
                       className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 cursor-pointer"
                     >
-                      <option value="gemini-3.5-flash">Gemini 3.5 Flash (Default - High Speed & High-Quality Analytical Explanations)</option>
-                      <option value="gemini-2.5-pro">Gemini 2.5 Pro (Flagship High-Thinking & Deep Reasoning)</option>
-                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Lightweight & Speedy)</option>
-                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Performance Legacy)</option>
-                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast Legacy)</option>
+                      <option value="gemini-2.5-flash-exp">2.5 Flash (Extended Thinking)</option>
+                      <option value="gemini-2.5-pro-exp-03-25">2.5 Pro</option>
+                      <option value="gemini-2.0-flash">2.0 Flash</option>
                       <option value="custom">-- Custom Model ID (Use Any Model) --</option>
                     </select>
                     {selectedModel === "custom" && (
                       <div className="space-y-1 mt-1.5 animate-fade-in">
                         <input
                           type="text"
-                          placeholder="e.g. gemini-3.5-flash"
+                          placeholder="e.g. gemini-2.5-flash-exp"
                           value={customModelId}
                           onChange={(e) => setCustomModelId(e.target.value)}
                           className="w-full text-xs bg-slate-950 border border-indigo-500 rounded-lg p-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 font-mono placeholder:text-slate-600"
                         />
                         <span className="text-[9px] text-indigo-400 block leading-tight">
-                          Enter any official Gemini model identifier (e.g. <code>gemini-3.5-flash</code> or <code>gemini-1.5-pro</code>).
+                          Enter any Gemini model identifier (e.g. <code>gemini-2.5-flash-exp</code>).
                         </span>
                       </div>
                     )}
                     <span className="text-[9px] text-slate-500 block leading-tight">
-                      We default to Gemini 3.5 Flash because it generates superior, high-speed, intuitive first-principles explanations.
+                      We default to 2.5 Flash Extended Thinking for high-quality explanations.
                     </span>
                   </div>
                 </div>
@@ -617,7 +617,7 @@ export default function App() {
                 {/* Learning Strategy / Track Selector */}
                 <div className="space-y-3">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Step 1: Choose Your Core Lecture Explanation Strategy
+                    Style
                   </label>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -634,13 +634,13 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
                           <Sparkles className="h-4 w-4 text-indigo-400" />
-                          <span>Class-Adaptive Auto</span>
+                          <span>Auto</span>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed mt-1">
-                          Classifies your PDF and switches styling automatically. Great fallback.
+                          Detects subject type and adapts style automatically.
                         </p>
                       </div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-400 mt-1">Subject-Adaptive</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-400 mt-1">Recommended</span>
                     </button>
 
                     {/* STEM & Logic */}
@@ -656,13 +656,13 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
                           <Lightbulb className="h-4 w-4 text-emerald-400" />
-                          <span>STEM & First-Principles</span>
+                          <span>STEM / Logic</span>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed mt-1">
-                          Focuses on "why" motivations, derivation walkthroughs, failures, and beginner analogies.
+                          Deep "why" explanations, derivations, and beginner analogies.
                         </p>
                       </div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 mt-1">Understanding & Derivation</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 mt-1">First-Principles</span>
                     </button>
 
                     {/* Absurd Stories */}
@@ -678,13 +678,13 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
                           <BookOpen className="h-4 w-4 text-purple-400" />
-                          <span>Absurd Stories & Mnemonics</span>
+                          <span>Stories & Mnemonics</span>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed mt-1">
-                          Uses vivid, wacky anecdotes and memory hacks. Weaves relationships to past slide items.
+                          Vivid stories and memory hooks to make facts stick.
                         </p>
                       </div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-purple-400 mt-1">Maximum Brain Recall</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-purple-400 mt-1">Memory Recall</span>
                     </button>
 
                     {/* Cram Mode */}
@@ -700,13 +700,13 @@ export default function App() {
                       <div>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
                           <FileText className="h-4 w-4 text-amber-400" />
-                          <span>High-Velocity Cram Mode</span>
+                          <span>Cram</span>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed mt-1">
-                          No fluff. Synthesizes key formulas, critical bullet summaries, cheat sheets, and exam facts.
+                          Dense bullet summaries, key formulas, and exam facts only.
                         </p>
                       </div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-amber-400 mt-1">Rapid Exam Prep</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-amber-400 mt-1">Exam Prep</span>
                     </button>
                   </div>
                 </div>
@@ -715,10 +715,10 @@ export default function App() {
                 <div className="space-y-2 border-t border-slate-800/80 pt-4">
                   <label htmlFor="custom-instructions" className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                     <MessageSquare className="h-3.5 w-3.5 text-indigo-400" />
-                    Step 2: Add-On Custom Style Hints (Merged with active strategy)
+                    Custom Hints
                   </label>
                   <p className="text-[10px] text-slate-500 leading-normal">
-                    This text acts as an add-on. For example, if you chose <strong>STEM & First-Principles</strong> above and type <em>"Focus on math equations"</em> here, the AI will prioritize mathematical formulas using intuitive analogies.
+                    Optional add-on instructions merged with the style above.
                   </p>
                   <textarea
                     id="custom-instructions"
@@ -739,7 +739,7 @@ export default function App() {
                   className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-indigo-600/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
                 >
                   <Sparkles className="h-4 w-4" />
-                  Generate Mapped Lecture Notes
+                  Generate Notes
                 </button>
 
                 {!pdfBase64 && (
@@ -782,7 +782,7 @@ export default function App() {
                       PDF Slides Loaded Successfully
                     </h3>
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      Click the button below to generate deep-reasoning explanations for slides 1 to 15.
+                      Click below to generate notes starting from slide 1.
                     </p>
                   </div>
 
@@ -793,7 +793,7 @@ export default function App() {
                       className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-600/30 text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <Sparkles className="h-4 w-4" />
-                      Explain Slides 1 - 15
+                      Start from Slide 1
                     </button>
                   </form>
                 </div>
@@ -811,10 +811,10 @@ export default function App() {
 
                   <div className="space-y-1">
                     <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      Analyzing Lecture Slides
+                      Analyzing Slides
                     </h3>
                     <p className="text-xs text-slate-400">
-                      Generating beautiful slide explanations
+                      Generating notes...
                     </p>
                   </div>
 
@@ -1127,11 +1127,9 @@ export default function App() {
                             onChange={(e) => setSubchatModel(e.target.value)}
                             className="flex-1 text-[10px] bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-300 cursor-pointer"
                           >
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                      <option value="gemini-2.5-flash-exp">2.5 Flash (Extended Thinking)</option>
+                            <option value="gemini-2.5-pro-exp-03-25">2.5 Pro</option>
+                            <option value="gemini-2.0-flash">2.0 Flash</option>
                           </select>
                         </div>
                         {/* Message scroll list */}

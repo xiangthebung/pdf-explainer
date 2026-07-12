@@ -54,7 +54,7 @@ app.post("/api/explain-pdf", async (req, res) => {
     });
 
     // Default model is gemini-3.5-flash for high-speed, intuitive explanations
-    const modelToUse = selectedModel || "gemini-3.5-flash";
+    const modelToUse = selectedModel || "gemini-2.5-flash-exp";
 
     // Standardize incoming base64 payload for Gemini API
     const base64Data = pdfData.includes(";base64,")
@@ -294,7 +294,7 @@ app.post("/api/subchat", async (req, res) => {
     });
 
     // Default to the fast, cheaper model (gemini-3.5-flash) to save user credits/tokens
-    const subchatModel = selectedModel || "gemini-3.5-flash";
+    const subchatModel = selectedModel || "gemini-2.5-flash-exp";
 
     // Build model context
     const contextPrompt = `
