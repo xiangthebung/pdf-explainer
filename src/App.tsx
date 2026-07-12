@@ -4,30 +4,21 @@ import {
   Sparkles,
   Upload,
   BookOpen,
-  ArrowRight,
-  HelpCircle,
-  Award,
-  CheckCircle2,
-  XCircle,
   Play,
-  RotateCcw,
   MessageSquare,
   FileText,
-  Bookmark,
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  EyeOff,
   AlertTriangle,
-  FileQuestion,
   Lightbulb,
   Send,
   Bot,
   User,
-  Minimize2
+  Minimize2,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import PDFViewer from "./components/PDFViewer";
-import { ExplanationResponse } from "./types";
+import { ExplanationResponse, QuizQuestion } from "./types";
 import { DEMO_PDF_BASE64, DEMO_EXPLANATION } from "./components/DemoData";
 
 const getChildrenText = (children: React.ReactNode): string => {
@@ -74,6 +65,8 @@ export default function App() {
   const [currentSubchatInput, setCurrentSubchatInput] = useState<string>("");
   const [isSubchatSending, setIsSubchatSending] = useState<boolean>(false);
   const [subchatError, setSubchatError] = useState<string | null>(null);
+  const [subchatModel, setSubchatModel] = useState<string>("gemini-2.5-flash");
+  const [showQuiz, setShowQuiz] = useState<{ [slideNumber: number]: boolean }>({});
 
   // Floating panel drag/resize state
   const [panelPos, setPanelPos] = useState<{ x: number; y: number }>({ x: -1, y: -1 });
@@ -285,7 +278,7 @@ export default function App() {
   };
 
   // Submit base64 PDF and prompts to server-side Gemini endpoint for a specific slide range
-  const handleGenerateNotesForRange = async (start: number, end: number) => {
+  const handleGenerateNotesForRange = async (start: number, _end?: number) => {
     if (!pdfBase64) return;
 
     setIsAnalyzing(true);
@@ -301,7 +294,6 @@ export default function App() {
           selectedModel: selectedModel === "custom" ? customModelId : selectedModel,
           selectedTrack,
           startSlide: start,
-          endSlide: end,
         }),
       });
 
@@ -343,7 +335,7 @@ export default function App() {
 
   const handleGenerateNotes = (e: React.FormEvent) => {
     e.preventDefault();
-    handleGenerateNotesForRange(1, 15);
+    handleGenerateNotesForRange(1);
   };
 
   // Auto pre-load the fully configured Machine Learning demo
@@ -415,10 +407,7 @@ export default function App() {
           chatHistory: previousMessages,
           newMessage: textToSend,
           customApiKey: customApiKey || undefined,
-          // Explaining the explanations should use a cheaper/faster model (flash) to save credits!
-          selectedModel: selectedModel === "custom" 
-            ? customModelId 
-            : (selectedModel.includes("pro") ? selectedModel.replace("pro", "flash") : selectedModel),
+          selectedModel: subchatModel,
         }),
       });
 
@@ -444,6 +433,37 @@ export default function App() {
     if (slideNum >= 1 && slideNum <= totalPdfPages) {
       setCurrentPdfPage(slideNum);
     }
+  };
+
+  const SECTION_MARKERS = [
+    { key: "Memory Hook", label: "Memory Hook", className: "bg-fuchsia-500/10 border-fuchsia-500/30 text-fuchsia-400" },
+    { key: "Exam Alert", label: "Exam Alert", className: "bg-rose-500/10 border-rose-500/30 text-rose-400" },
+    { key: "Intuition", label: "Intuition", className: "bg-amber-500/10 border-amber-500/30 text-amber-400" },
+    { key: "Real-World", label: "Real-World Example", className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" },
+  ];
+
+  const stripMarkerPrefix = (text: string, marker: string): string => {
+    const stripped = text.slice(marker.length).replace(/^[:\s]+/, "");
+    return stripped;
+  };
+
+  const renderNotesParagraph = (children: React.ReactNode) => {
+    const text = getChildrenText(children);
+    for (const marker of SECTION_MARKERS) {
+      if (text.startsWith(marker.key)) {
+        const content = stripMarkerPrefix(text, marker.key);
+        return (
+          <div className={`border ${marker.className} p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl relative overflow-hidden backdrop-blur-sm`}>
+            <div className="absolute top-0 right-0 w-20 h-20 opacity-5 rounded-full -mr-8 -mt-8 pointer-events-none bg-current" />
+            <span className={`font-bold flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display ${marker.className.split(" ").find(c => c.startsWith("text-"))}`}>
+              {marker.label}
+            </span>
+            <div className="text-slate-200 leading-relaxed font-sans">{content}</div>
+          </div>
+        );
+      }
+    }
+    return <p className="text-slate-300 text-xs md:text-sm leading-relaxed mb-3.5">{children}</p>;
   };
 
 
@@ -921,10 +941,6 @@ export default function App() {
                         while (currentBatchStart > 1 && !processedSlides[currentBatchStart - 1]) {
                           currentBatchStart--;
                         }
-                        const batchSize = 15;
-                        const currentBatchEnd = totalPdfPages 
-                          ? Math.min(currentBatchStart + batchSize - 1, totalPdfPages) 
-                          : currentBatchStart + batchSize - 1;
 
                         // Find the first unprocessed page starting from currentPdfPage + 1
                         let nextBatchStart = -1;
@@ -934,10 +950,6 @@ export default function App() {
                             break;
                           }
                         }
-                        const nextBatchEnd = nextBatchStart !== -1 && totalPdfPages
-                          ? Math.min(nextBatchStart + batchSize - 1, totalPdfPages)
-                          : -1;
-
                         if (currentExplanationText) {
                           const cleanExplanationText = currentExplanationText.replace(/\\n/g, "\n");
                           return (
@@ -962,158 +974,7 @@ export default function App() {
                                         {children}
                                       </h3>
                                     ),
-                                    p: ({ children }) => {
-                                      // Get serial text to look for key component markers
-                                      const text = getChildrenText(children);
-                                      const textLower = text.toLowerCase();
-                                      
-                                      // Custom fun tutor prefixes
-                                      if (
-                                        text.startsWith("Brain Hack:") || 
-                                        text.startsWith("Brain Hack") || 
-                                        text.startsWith("🧠 Brain Hack:") || 
-                                        text.startsWith("🧠 Brain Hack") || 
-                                        text.startsWith("Mnemonic:") || 
-                                        text.startsWith("Mnemonic") ||
-                                        text.startsWith("💡 Mnemonic:") || 
-                                        text.startsWith("💡 Mnemonic")
-                                      ) {
-                                        return (
-                                          <div className="bg-fuchsia-500/10 border border-fuchsia-500/30 p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl shadow-fuchsia-950/20 relative overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute top-0 right-0 w-20 h-20 bg-fuchsia-500/5 rounded-full -mr-8 -mt-8 pointer-events-none" />
-                                            <span className="font-bold text-fuchsia-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display">
-                                              Brain Hack & Memory Trick
-                                            </span>
-                                            <div className="text-slate-200 leading-relaxed font-sans">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      if (
-                                        text.startsWith("Exam Alert:") || 
-                                        text.startsWith("Exam Alert") || 
-                                        text.startsWith("🔥 Exam Alert:") || 
-                                        text.startsWith("🔥 Exam Alert") || 
-                                        text.startsWith("Common Trap:") || 
-                                        text.startsWith("Common Trap") ||
-                                        text.startsWith("⚠️ Common Trap:") || 
-                                        text.startsWith("⚠️ Common Trap")
-                                      ) {
-                                        return (
-                                          <div className="bg-rose-500/10 border border-rose-500/30 p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl shadow-rose-950/20 relative overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute top-0 right-0 w-20 h-20 bg-rose-500/5 rounded-full -mr-8 -mt-8 pointer-events-none" />
-                                            <span className="font-bold text-rose-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display">
-                                              Exam Alert & Common Trap
-                                            </span>
-                                            <div className="text-slate-200 leading-relaxed font-sans">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      if (
-                                        text.startsWith("Pizza Metaphor:") || 
-                                        text.startsWith("Pizza Metaphor") || 
-                                        text.startsWith("🍕 Pizza Metaphor:") || 
-                                        text.startsWith("🍕 Pizza Metaphor") || 
-                                        text.startsWith("Metaphor:") || 
-                                        text.startsWith("Metaphor") ||
-                                        text.startsWith("Analogy:") || 
-                                        text.startsWith("Analogy")
-                                      ) {
-                                        return (
-                                          <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl shadow-amber-950/20 relative overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute top-0 right-0 w-20 h-20 bg-amber-500/5 rounded-full -mr-8 -mt-8 pointer-events-none" />
-                                            <span className="font-bold text-amber-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display">
-                                              Concept Metaphor & Analogy
-                                            </span>
-                                            <div className="text-slate-200 leading-relaxed font-sans">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      if (
-                                        text.startsWith("Real-world:") || 
-                                        text.startsWith("Real-world") || 
-                                        text.startsWith("🚀 Real-world:") || 
-                                        text.startsWith("🚀 Real-world")
-                                      ) {
-                                        return (
-                                          <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl shadow-emerald-950/20 relative overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/5 rounded-full -mr-8 -mt-8 pointer-events-none" />
-                                            <span className="font-bold text-emerald-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display">
-                                              Real-World Case Study
-                                            </span>
-                                            <div className="text-slate-200 leading-relaxed font-sans">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      if (text.startsWith("Affective Component:") || text.startsWith("Affective Component")) {
-                                        return (
-                                          <div className="bg-rose-500/5 border-l-4 border-rose-500/70 p-3.5 rounded-r-xl my-4 text-xs md:text-sm shadow-lg shadow-rose-950/20 backdrop-blur-sm">
-                                            <span className="font-bold text-rose-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-1.5 font-display">
-                                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
-                                              Affective (Feelings)
-                                            </span>
-                                            <div className="text-slate-200">{children}</div>
-                                          </div>
-                                        );
-                                      }
-                                      if (text.startsWith("Behavioural Component:") || text.startsWith("Behavioural Component")) {
-                                        return (
-                                          <div className="bg-emerald-500/5 border-l-4 border-emerald-500/70 p-3.5 rounded-r-xl my-4 text-xs md:text-sm shadow-lg shadow-emerald-950/20 backdrop-blur-sm">
-                                            <span className="font-bold text-emerald-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-1.5 font-display">
-                                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                              Behavioural (Actions)
-                                            </span>
-                                            <div className="text-slate-200">{children}</div>
-                                          </div>
-                                        );
-                                      }
-                                      if (text.startsWith("Cognitive Component:") || text.startsWith("Cognitive Component")) {
-                                        return (
-                                          <div className="bg-sky-500/5 border-l-4 border-sky-500/70 p-3.5 rounded-r-xl my-4 text-xs md:text-sm shadow-lg shadow-sky-950/20 backdrop-blur-sm">
-                                            <span className="font-bold text-sky-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-1.5 font-display">
-                                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                                              Cognitive (Thoughts)
-                                            </span>
-                                            <div className="text-slate-200">{children}</div>
-                                          </div>
-                                        );
-                                      }
-                                      
-                                      if (text.startsWith("A =") || text.startsWith("B =") || text.startsWith("C =")) {
-                                        const isA = text.startsWith("A =");
-                                        const isB = text.startsWith("B =");
-                                        const borderCol = isA ? "border-rose-500/30" : isB ? "border-emerald-500/30" : "border-sky-500/30";
-                                        const bgCol = isA ? "bg-rose-500/5" : isB ? "bg-emerald-500/5" : "bg-sky-500/5";
-                                        const badgeCol = isA ? "bg-rose-500/20 text-rose-300" : isB ? "bg-emerald-500/20 text-emerald-300" : "bg-sky-500/20 text-sky-300";
-                                        
-                                        return (
-                                          <div className={`p-3 rounded-xl border ${borderCol} ${bgCol} my-2 flex items-center gap-3 shadow shadow-slate-950/20 backdrop-blur-sm`}>
-                                            <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${badgeCol} shrink-0 font-display`}>
-                                              {text.charAt(0)}
-                                            </div>
-                                            <div className="text-slate-200 text-xs md:text-sm flex-1">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      if (textLower.includes("story") || textLower.includes("trap") || textLower.includes("mnemonic") || textLower.includes("analogy") || textLower.includes("metaphor")) {
-                                        return (
-                                          <div className="bg-amber-500/5 border border-amber-500/20 p-4 rounded-2xl my-4 text-xs md:text-sm shadow-xl shadow-amber-950/10 relative overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute top-0 right-0 w-20 h-20 bg-amber-500/5 rounded-full -mr-8 -mt-8 pointer-events-none" />
-                                            <span className="font-bold text-amber-400 flex items-center gap-1.5 text-[10px] uppercase tracking-wider mb-2 font-display">
-                                              <Lightbulb className="h-3.5 w-3.5 text-amber-400" />
-                                              Walkthrough & Analogy Walk
-                                            </span>
-                                            <div className="text-slate-200 leading-relaxed">{children}</div>
-                                          </div>
-                                        );
-                                      }
-
-                                      return <p className="text-slate-300 text-xs md:text-sm leading-relaxed mb-3.5">{children}</p>;
-                                    },
+                                    p: ({ children }) => renderNotesParagraph(children),
                                     ul: ({ children }) => <ul className="space-y-2.5 my-3.5 pl-0.5">{children}</ul>,
                                     ol: ({ children }) => <ol className="space-y-2.5 my-3.5 pl-4 list-decimal text-slate-300 text-xs md:text-sm">{children}</ol>,
                                     li: ({ children }) => (
@@ -1148,17 +1009,59 @@ export default function App() {
                                 </ReactMarkdown>
                               </div>
 
+                              {/* Quiz Questions */}
+                              {(() => {
+                                const currentSlideData = explanation?.explanations?.find(e => e.slideNumber === currentPdfPage);
+                                const quiz = currentSlideData?.quizQuestions;
+                                if (!quiz || quiz.length === 0) return null;
+                                const isOpen = showQuiz[currentPdfPage];
+                                return (
+                                  <div className="mt-6 border-t border-slate-800/60 pt-5">
+                                    <button
+                                      onClick={() => setShowQuiz(prev => ({ ...prev, [currentPdfPage]: !isOpen }))}
+                                      className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-colors cursor-pointer w-full"
+                                    >
+                                      <HelpCircle className="h-3.5 w-3.5 text-sky-400" />
+                                      Quiz Questions ({quiz.length})
+                                      {isOpen ? <ChevronUp className="h-3 w-3 ml-auto" /> : <ChevronDown className="h-3 w-3 ml-auto" />}
+                                    </button>
+                                    {isOpen && (
+                                      <div className="mt-3 space-y-4 animate-fade-in">
+                                        {quiz.map((q, qi) => (
+                                          <div key={qi} className="bg-sky-500/5 border border-sky-500/20 rounded-2xl p-4 space-y-3">
+                                            <p className="text-xs font-semibold text-sky-300">{qi + 1}. {q.question}</p>
+                                            <div className="space-y-2">
+                                              {q.options.map((opt, oi) => {
+                                                const letter = ["A","B","C","D"][oi];
+                                                const isCorrect = oi === q.correctIndex;
+                                                return (
+                                                  <div key={oi} className={`flex items-start gap-2 text-[11px] p-2 rounded-xl ${isCorrect ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300" : "text-slate-400 border border-transparent"}`}>
+                                                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5 ${isCorrect ? "bg-emerald-500/30 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>{letter}</span>
+                                                    <span>{opt}{isCorrect && " ✓"}</span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 italic border-t border-slate-800/60 pt-2">{q.explanation}</p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+
                               {/* Bottom interactive navigation footer inside note */}
                               <div className="mt-6 pt-5 border-t border-slate-800/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate-500 font-mono">
                                 <span>Slide {currentPdfPage} of {totalPdfPages || "?"}</span>
                                 
-                                {nextBatchStart !== -1 && nextBatchEnd !== -1 && (
+                                {nextBatchStart !== -1 && (
                                   <button
-                                    onClick={() => handleGenerateNotesForRange(nextBatchStart, nextBatchEnd)}
+                                    onClick={() => handleGenerateNotesForRange(nextBatchStart, nextBatchStart)}
                                     className="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 transition-colors cursor-pointer text-[10px]"
                                   >
                                     <Sparkles className="h-3 w-3 animate-pulse" />
-                                    Explain Slides {nextBatchStart} - {nextBatchEnd}
+                                    Continue from Slide {nextBatchStart}
                                   </button>
                                 )}
                               </div>
@@ -1172,19 +1075,19 @@ export default function App() {
                               </div>
                               <div className="space-y-1">
                                 <p className="text-xs font-bold text-white">
-                                  No Complex Notes Needed
+                                  Title or Transition Slide
                                 </p>
                                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                                  Our AI scanned this page and skipped it because it is a title, transition, or blank slide without dense core lecture content. Use slide navigation to proceed!
+                                  The AI processed this slide and noted it as a title or transition page. Navigate to the next slide for content.
                                 </p>
                               </div>
                               
-                              {nextBatchStart !== -1 && nextBatchEnd !== -1 && (
+                              {nextBatchStart !== -1 && (
                                 <button
-                                  onClick={() => handleGenerateNotesForRange(nextBatchStart, nextBatchEnd)}
+                                  onClick={() => handleGenerateNotesForRange(nextBatchStart, nextBatchStart)}
                                   className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-xl text-[10px] shadow-lg shadow-indigo-600/25 transition-colors cursor-pointer w-full"
                                 >
-                                  Explain Slides {nextBatchStart} - {nextBatchEnd}
+                                  Continue from Slide {nextBatchStart}
                                 </button>
                               )}
                             </div>
@@ -1204,10 +1107,10 @@ export default function App() {
                                 </p>
                               </div>
                               <button
-                                onClick={() => handleGenerateNotesForRange(currentBatchStart, currentBatchEnd)}
+                                onClick={() => handleGenerateNotesForRange(currentBatchStart, currentBatchStart)}
                                 className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 px-4 rounded-xl text-[10px] shadow-lg shadow-indigo-600/25 transition-colors cursor-pointer w-full"
                               >
-                                Explain Slides {currentBatchStart} - {currentBatchEnd}
+                                Explain from Slide {currentBatchStart}
                               </button>
                             </div>
                           );
@@ -1216,6 +1119,21 @@ export default function App() {
                     ) : (
                       /* Tab 2: Ask AI Chat Walkthrough */
                       <div className="flex-1 flex flex-col overflow-hidden">
+                        {/* Model selector for chat */}
+                        <div className="px-3 pt-3 pb-0 flex items-center gap-2 border-b border-slate-800/40 pb-2.5 shrink-0">
+                          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold shrink-0">Tutor Model</span>
+                          <select
+                            value={subchatModel}
+                            onChange={(e) => setSubchatModel(e.target.value)}
+                            className="flex-1 text-[10px] bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-300 cursor-pointer"
+                          >
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                          </select>
+                        </div>
                         {/* Message scroll list */}
                         <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                           {/* Welcome message */}
@@ -1258,7 +1176,27 @@ export default function App() {
                                       : "bg-slate-800/50 border border-slate-700/30 text-slate-100 rounded-tl-none"
                                   }`}
                                 >
-                                  {msg.text}
+                                  {isUser ? msg.text : (
+                                    <ReactMarkdown
+                                      components={{
+                                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                                        strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
+                                        ul: ({ children }) => <ul className="list-disc pl-4 space-y-1 my-1">{children}</ul>,
+                                        ol: ({ children }) => <ol className="list-decimal pl-4 space-y-1 my-1">{children}</ol>,
+                                        li: ({ children }) => <li>{children}</li>,
+                                        code: ({ children, className }: any) => {
+                                          const isBlock = /language-/.test(className || "");
+                                          return isBlock
+                                            ? <pre className="bg-slate-950 border border-slate-800 p-2 rounded-lg my-2 overflow-x-auto text-[10px] font-mono text-indigo-300"><code>{children}</code></pre>
+                                            : <code className="bg-slate-950 px-1 py-0.5 rounded text-[10px] font-mono text-pink-400">{children}</code>;
+                                        },
+                                        h1: ({ children }) => <p className="font-bold text-white mb-1">{children}</p>,
+                                        h2: ({ children }) => <p className="font-bold text-sky-300 mb-1">{children}</p>,
+                                        h3: ({ children }) => <p className="font-semibold text-emerald-300 mb-1">{children}</p>,
+                                        blockquote: ({ children }) => <blockquote className="border-l-2 border-indigo-400 pl-2 italic text-slate-300 my-1">{children}</blockquote>,
+                                      }}
+                                    >{msg.text}</ReactMarkdown>
+                                  )}
                                 </div>
                               </div>
                             );

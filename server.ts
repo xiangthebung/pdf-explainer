@@ -69,7 +69,6 @@ app.post("/api/explain-pdf", async (req, res) => {
     };
 
     const activeStart = Number(startSlide) || 1;
-    const activeEnd = Number(endSlide) || 15;
 
     let trackPrompt = "";
     if (selectedTrack === "logic") {
@@ -118,38 +117,55 @@ For "non-logic" classes (Psychology/History etc.):
 
     const userPrompt = `
 Analyze this PDF of lecture slides/documents.
-We want to generate comprehensive, engaging, and highly structured explanations starting from slide ${activeStart} up to slide ${activeEnd} (inclusive, 1-indexed).
+Generate comprehensive, engaging, and highly structured explanations STARTING from slide ${activeStart}.
 
 ${trackPrompt}
 
-CRITICAL DIRECTIVES FOR DYNAMIC PLANNING AND OUTLINE DEPTH (YOU CONTROL THE SCOPE):
-1. DENSE VS. SPARSE CONTENT BATCHING:
-   - You determine how many slides to process in this run. If the slides are extremely dense, technical, or contain complex formulas/code, you can choose to stop earlier than the requested end slide (e.g., stop at slide 8 instead of 15) to maintain deep conceptual quality. Return the actual final slide number you processed in the "endSlide" property of the output JSON.
-   - If the slides are simple transitions, repetitive, or sparse, feel free to cover the entire requested range (up to ${activeEnd}).
-2. FILTER UNIMPORTANT SLIDES:
-   - If a slide is a title page, a section divider, blank, or has no educational value, DO NOT generate a lengthy summary. You can completely omit it from the "explanations" array, or provide a single-line simple note. If you omit it, the user interface will automatically identify it as a transition page and guide the student forward.
+CRITICAL DIRECTIVES — READ CAREFULLY:
+
+1. YOU DECIDE HOW MANY SLIDES TO PROCESS:
+   - Start at slide ${activeStart} and process as many slides as you can while maintaining deep quality.
+   - If slides are dense (complex math, code, theory), process fewer slides (e.g., 5-8) but go deep on each.
+   - If slides are simple or sparse, process more (e.g., 12-18).
+   - Set "endSlide" in your output to the ACTUAL last slide number you processed. The UI uses this to determine the next batch start.
+   - Never artificially pad or rush. Quality over quantity.
+
+2. EVERY SLIDE GETS AN ENTRY — but calibrate length:
+   - Title pages, section dividers, blank slides: include a very short entry (1-2 sentences max) noting what this slide is.
+   - Content-rich slides: provide full deep explanation.
+   - This way the UI always has something to show, and students are never left confused.
+
 3. CONTEXT-AWARE COMPARISONS:
-   - If consecutive slides are almost identical (e.g. showing one new list item added or small increments), you should focus your explanation ONLY on the changes/additions on the second slide, keeping it brief and connected.
-4. NO EMOJIS:
-   - Do NOT use emojis anywhere in your explanations or titles. Colors and styled borders are configured in our user interface based on plain text prefixes.
+   - If consecutive slides build on each other (e.g. adding one bullet each time), explain ONLY the new addition concisely and reference the previous slide.
+
+4. NO EMOJIS anywhere in explanations or titles.
+
 5. INFORMAL, FUN & ENGAGING TUTORING STYLE:
-   - Speak like an incredibly bright, witty, and clever classmate explaining concepts over pizza. Keep it conversational, not dry or overly academic.
-   - Use these plain text prefixes at the start of paragraphs to highlight key insights (do NOT include emojis in them):
-     - "Brain Hack:" or "Mnemonic:" for memory anchors and retention hooks.
-     - "Exam Alert:" or "Common Trap:" for crucial points where students often slip up on exams.
-     - "Metaphor:" or "Analogy:" for ultra-simplified real-world parallels.
-     - "Real-world:" for concrete practical applications.
+   - Speak like a brilliant, witty classmate explaining over pizza. Conversational, never dry.
+   - Use these SECTION MARKERS at the start of a paragraph — write ONLY the marker keyword, no colon after it, just start the content on the next line or after a space. The UI renders these as styled cards automatically:
+     - "Memory Hook" — for mnemonics, memory tricks, vivid associations
+     - "Exam Alert" — for common exam mistakes, traps, gotchas
+     - "Intuition" — for simplified metaphors, analogies, real-world parallels
+     - "Real-World" — for concrete practical applications
+   - Example: A paragraph starting with "Memory Hook Remember that gradient descent is like..." will render as a styled Memory Hook card.
+   - IMPORTANT: Do NOT repeat the section name inside the paragraph text after the marker. Write the content directly after the marker keyword.
+
+6. QUIZ QUESTIONS:
+   - For each content-rich slide, include 2-3 multiple choice questions in the quizQuestions array.
+   - Questions should test genuine understanding, not trivial recall.
+   - Each question: one correct answer and 3 plausible wrong answers.
+   - For title/transition slides, quizQuestions can be an empty array.
 
 FORMAT ALL MATH FORMULAS:
-- Use clean, plain unicode or standard ASCII (superscript x², subscripts x_i, basic fractions like a/b, or letters like delta, theta, lambda).
-- Do NOT write raw LaTeX tags or blocks (such as \\begin{equation}, \\frac, \\sum, \\int). Keep everything clean and readable in standard Markdown.
+- Use clean unicode or ASCII (x², x_i, a/b, delta, theta, lambda).
+- NO raw LaTeX (no \\begin{equation}, \\frac, \\sum, \\int).
 
-JSON SCHEMA & RESPONSE FORMATTING:
-- Produce a valid JSON response according to the schema.
-- Write actual newline characters (or normal JSON \\n escapes) in the JSON response to separate paragraphs.
-- Ensure "endSlide" reflects the actual last slide number processed in this run.
+JSON RESPONSE:
+- Valid JSON per the schema.
+- Use \\n for newlines within string values.
+- "endSlide" = actual last slide YOU processed.
 
-Additional user request to merge into this style: ${customInstructions || "None provided"}
+Additional user instructions: ${customInstructions || "None"}
 `;
 
     const response = await client.models.generateContent({
@@ -185,7 +201,7 @@ Additional user request to merge into this style: ${customInstructions || "None 
             },
             explanations: {
               type: Type.ARRAY,
-              description: "An array of slide explanations that you chose to generate. Only include entries for slides that actually have educational value. Skip blank, title, or transition slides.",
+              description: "An array of slide explanations — one entry per slide from startSlide to endSlide. Every slide gets an entry, even title/transition slides (use a short note for those).",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -195,13 +211,37 @@ Additional user request to merge into this style: ${customInstructions || "None 
                   },
                   explanation: {
                     type: Type.STRING,
-                    description: "The comprehensive detailed explanation in rich Markdown format.",
-                  }
+                    description: "The comprehensive detailed explanation in rich Markdown format. For title/transition slides, a brief 1-2 sentence note is fine.",
+                  },
+                  quizQuestions: {
+                    type: Type.ARRAY,
+                    description: "2-3 multiple choice quiz questions for this slide. Empty array for title/transition slides.",
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        question: {
+                          type: Type.STRING,
+                          description: "The quiz question.",
+                        },
+                        options: {
+                          type: Type.ARRAY,
+                          description: "Exactly 4 answer options (A, B, C, D).",
+                          items: { type: Type.STRING },
+                        },
+                        correctIndex: {
+                          type: Type.INTEGER,
+                          description: "0-based index of the correct answer in options.",
+                        },
+                        explanation: {
+                          type: Type.STRING,
+                          description: "Brief explanation of why the correct answer is right.",
+                        },
+                      },
+                      required: ["question", "options", "correctIndex", "explanation"],
+                    },
+                  },
                 },
-                required: [
-                  "slideNumber",
-                  "explanation",
-                ],
+                required: ["slideNumber", "explanation", "quizQuestions"],
               },
             },
           },
