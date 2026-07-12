@@ -220,7 +220,7 @@ export default function App() {
     if (isAnalyzing) {
       setAnalysisProgress(0);
       const startTime = Date.now();
-      const duration = 60000; // 60 seconds estimate — AI calls take a while
+      const duration = 35000;
       intervalId = setInterval(() => {
         const elapsed = Date.now() - startTime;
         const percent = Math.min((elapsed / duration) * 100, 95); // cap at 95% until complete
@@ -754,6 +754,14 @@ export default function App() {
                   </button>
                 )}
               </div>
+
+              {/* Error display */}
+              {error && (
+                <div className="flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-400" />
+                  <span>{error}</span>
+                </div>
+              )}
             </form>
           </div>
         ) : (
@@ -795,6 +803,12 @@ export default function App() {
                       <Sparkles className="h-4 w-4" />
                       Start from Slide 1
                     </button>
+                    {error && (
+                      <div className="flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3 text-xs text-rose-300">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-rose-400" />
+                        <span>{error}</span>
+                      </div>
+                    )}
                   </form>
                 </div>
               </div>
