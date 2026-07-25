@@ -11,8 +11,8 @@ app.use(express.json({ limit: "50mb" }));
 
 app.get("/api/config", (req, res) => {
   res.json({
-    hasServerKey: !!process.env.GEMINI_API_KEY,
-    requireUserKey: !process.env.GEMINI_API_KEY
+    hasServerKey: false,
+    requireUserKey: true
   });
 });
 
@@ -41,9 +41,9 @@ app.post("/api/explain-pdf", async (req, res) => {
     if (!pdf) return res.status(400).json({ error: 'Missing pdfBase64' });
     const fileParts = [{ inlineData: { data: pdf.split(',')[1] || pdf, mimeType: 'application/pdf' } }];
 
-    const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+    const apiKey = customApiKey?.trim();
     if (!apiKey) {
-      return res.status(400).json({ error: "No API key provided. Please configure one." });
+      return res.status(400).json({ error: "Gemini API key is required. Please enter your Gemini API key in the API key box." });
     }
 
     const client = new GoogleGenAI({ apiKey });
@@ -111,8 +111,9 @@ PEDAGOGICAL DIRECTIVES:
    - For logic/math slides, generate a step-by-step "exampleProblem" instead of quizzes.
 
 FORMAT ALL MATH FORMULAS, DIAGRAMS, AND VECTOR GRAPHICS:
+- IMPORTANT: Because you are outputting JSON, you MUST double-escape ALL LaTeX backslashes! For example, you MUST write \\\\frac instead of \\frac, \\\\begin instead of \\begin, \\\\text instead of \\text. 
 - Use standard LaTeX math notation. Wrap block math in $$ ... $$ and inline math in $ ... $.
-- DO NOT write raw LaTeX like \\begin{pmatrix} ... \\end{pmatrix} without wrapping it in $$ ... $$.
+- DO NOT write raw LaTeX like \\\\begin{pmatrix} ... \\\\end{pmatrix} without wrapping it in $$ ... $$.
 - CURRENCY DOLLAR SIGNS: To write normal currency symbols (like \\$1.00), you MUST escape them with a backslash like \\$1.00.
 - For flowcharts, use Mermaid wrapped in \`\`\`mermaid blocks. DO NOT use + or mathematical operators directly inside node connections in mermaid (e.g. avoid A + B -- C, use A & B -- C or separate lines). ALWAYS wrap node text labels containing parentheses, math operators, or slashes in double quotes like Node["Label with (text) or 1/x"].
 - FOR ADVANCED VECTOR GRAPHICS: Draw clean, inline SVG code wrapped in \`\`\`svg blocks. Ensure it contains proper XML/SVG tags and viewBox. Do not output raw HTML comments or SVG lines outside a code block.
@@ -271,7 +272,31 @@ Additional user instructions: ${customInstructions || "None"}
       throw new Error("Empty response from Gemini API.");
     }
 
-    const parsedData = JSON.parse(textResponse.trim());
+    let cleanText = textResponse.trim();
+    if (cleanText.startsWith("```json")) {
+      cleanText = cleanText.substring(7);
+    } else if (cleanText.startsWith("```")) {
+      cleanText = cleanText.substring(3);
+    }
+    if (cleanText.endsWith("```")) {
+      cleanText = cleanText.substring(0, cleanText.length - 3);
+    }
+    cleanText = cleanText.trim();
+
+    cleanText = cleanText.replace(/(?<!\\)\\([a-zA-Z]+)/g, (match, p1) => {
+      if (["n", "r", "t", "b", "f"].includes(p1)) return match;
+      return "\\\\" + p1;
+    });
+    cleanText = cleanText.replace(/(?<!\\)\\([$\[\](){}])/g, "\\\\$1");
+    cleanText = cleanText.replace(/(?<!\\)\\'/g, "'");
+
+    let parsedData;
+    try {
+      parsedData = JSON.parse(cleanText);
+    } catch (parseErr: any) {
+      console.error("[explain-pdf] JSON Parse Error. Raw text:", textResponse);
+      throw new Error("Failed to parse the generated explanations. Please try again.");
+    }
 
     // Post-process to physically shuffle quiz options to eliminate LLM bias
     if (parsedData.explanations && Array.isArray(parsedData.explanations)) {
@@ -317,10 +342,10 @@ app.post("/api/generate-final-quiz", async (req, res) => {
     
     console.log(`[generate-final-quiz] Params: selectedModel=${selectedModel}`);
 
-    const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+    const apiKey = customApiKey?.trim();
     if (!apiKey) {
-      console.error("[generate-final-quiz] Error: No Gemini API Key configured.");
-      return res.status(400).json({ error: "Gemini API key is missing. Please configure your API key." });
+      console.error("[generate-final-quiz] Error: No Gemini API Key provided.");
+      return res.status(400).json({ error: "Gemini API key is required. Please enter your Gemini API key in the API key box." });
     }
 
     const client = new GoogleGenAI({
@@ -393,6 +418,7 @@ Look at the lecture slides and the questions already generated above, and genera
 
     contextPrompt += `
 IMPORTANT constraints for each puzzle based on its "type":
+- IMPORTANT: Because you are outputting JSON, you MUST double-escape ALL LaTeX backslashes! For example, you MUST write \\\\frac instead of \\frac, \\\\begin instead of \\begin, \\\\text instead of \\text.
 - "sourceSlideNumber": The specific slide number (integer) from which this concept/term was extracted.
 - For type "quiz":
   * "question": The question string.
@@ -534,7 +560,16 @@ IMPORTANT constraints for each puzzle based on its "type":
       if (cleanText.endsWith("```")) {
         cleanText = cleanText.substring(0, cleanText.length - 3);
       }
-      parsed = JSON.parse(cleanText.trim());
+      cleanText = cleanText.trim();
+
+      cleanText = cleanText.replace(/(?<!\\)\\([a-zA-Z]+)/g, (match, p1) => {
+        if (["n", "r", "t", "b", "f"].includes(p1)) return match;
+        return "\\\\" + p1;
+      });
+      cleanText = cleanText.replace(/(?<!\\)\\([$\[\](){}])/g, "\\\\$1");
+      cleanText = cleanText.replace(/(?<!\\)\\'/g, "'");
+
+      parsed = JSON.parse(cleanText);
     } catch (parseErr: any) {
       console.error("[generate-final-quiz] JSON Parse Error. Raw text:", responseText);
       throw new Error("Failed to parse the generated puzzles. Please try again.");
@@ -580,19 +615,10 @@ app.post("/api/subchat", async (req, res) => {
       return;
     }
 
-    // Determine API Key and handle public restriction flag
-    const requireUserKey = process.env.REQUIRE_USER_API_KEY === "true";
-    const activeApiKey = (customApiKey && customApiKey.trim()) || (!requireUserKey ? process.env.GEMINI_API_KEY : null) || null;
-    
+    const activeApiKey = customApiKey?.trim();
     if (!activeApiKey) {
-      if (requireUserKey && !customApiKey) {
-        res.status(400).json({
-          error: "This public instance requires you to provide your own Gemini API key. Please configure it in the settings panel."
-        });
-        return;
-      }
       res.status(400).json({
-        error: "A Gemini API key is required. Please enter your API key in the settings panel to continue."
+        error: "Gemini API key is required. Please enter your Gemini API key in the API key box."
       });
       return;
     }

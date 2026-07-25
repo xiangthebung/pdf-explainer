@@ -31,7 +31,7 @@ export function InteractiveMatching({ pairs: rawPairs, onComplete, isCompleted, 
   const [attempts, setAttempts] = useState(0);
 
   // Auto-extract valid pairs if rawPairs is empty or malformed
-  const activePairs = extractMatchingPairs({ pairs: rawPairs, title });
+  const activePairs = React.useMemo(() => extractMatchingPairs({ pairs: rawPairs, title }), [rawPairs, title]);
 
   // Initialize and shuffle
   useEffect(() => {
@@ -62,35 +62,53 @@ export function InteractiveMatching({ pairs: rawPairs, onComplete, isCompleted, 
     setAttempts(0);
   }, [JSON.stringify(rawPairs)]);
 
-  // Handle Match Selection
-  useEffect(() => {
-    if (selectedConcept && selectedDefinition) {
-      if (selectedConcept.originalIndex === selectedDefinition.originalIndex) {
-        // Correct match!
-        const newMatches = { ...matches, [selectedConcept.id]: selectedDefinition.id };
-        setMatches(newMatches);
-        setSelectedConcept(null);
-        setSelectedDefinition(null);
+  const checkMatch = (c: ShuffledItem, d: ShuffledItem) => {
+    if (c.originalIndex === d.originalIndex) {
+      // Correct match!
+      const newMatches = { ...matches, [c.id]: d.id };
+      setMatches(newMatches);
+      setSelectedConcept(null);
+      setSelectedDefinition(null);
 
-        // Check if all matched
-        if (Object.keys(newMatches).length === activePairs.length) {
-          onComplete();
-        }
-      } else {
-        // Wrong match
-        setWrongMatch({ conceptId: selectedConcept.id, definitionId: selectedDefinition.id });
-        setAttempts((prev) => prev + 1);
-        
-        // Flash red and reset selection
-        const timer = setTimeout(() => {
-          setWrongMatch(null);
-          setSelectedConcept(null);
-          setSelectedDefinition(null);
-        }, 1000);
-        return () => clearTimeout(timer);
+      // Check if all matched
+      if (Object.keys(newMatches).length === activePairs.length) {
+        onComplete();
       }
+    } else {
+      // Wrong match
+      setWrongMatch({ conceptId: c.id, definitionId: d.id });
+      setAttempts((prev) => prev + 1);
+      
+      // Flash red and reset selection
+      setTimeout(() => {
+        setWrongMatch((current) => {
+          // Only clear if we're still showing this exact wrong match
+          if (current?.conceptId === c.id && current?.definitionId === d.id) {
+             setSelectedConcept(null);
+             setSelectedDefinition(null);
+             return null;
+          }
+          return current;
+        });
+      }, 1000);
     }
-  }, [selectedConcept, selectedDefinition, matches, activePairs, onComplete]);
+  };
+
+  const handleSelectConcept = (c: ShuffledItem) => {
+    if (wrongMatch) return;
+    setSelectedConcept(c);
+    if (selectedDefinition) {
+      checkMatch(c, selectedDefinition);
+    }
+  };
+
+  const handleSelectDefinition = (d: ShuffledItem) => {
+    if (wrongMatch) return;
+    setSelectedDefinition(d);
+    if (selectedConcept) {
+      checkMatch(selectedConcept, d);
+    }
+  };
 
   const isAllMatched = Object.keys(matches).length === activePairs.length && activePairs.length > 0;
 
@@ -129,7 +147,7 @@ export function InteractiveMatching({ pairs: rawPairs, onComplete, isCompleted, 
               <button
                 key={c.id}
                 disabled={isMatched || isCompleted || !!wrongMatch}
-                onClick={() => setSelectedConcept(c)}
+                onClick={() => handleSelectConcept(c)}
                 className={`w-full text-left p-3 rounded-xl border text-xs leading-relaxed transition-all duration-200 cursor-pointer flex items-center justify-between ${cardClass}`}
               >
                 <div className="flex-1 font-semibold">
@@ -167,7 +185,7 @@ export function InteractiveMatching({ pairs: rawPairs, onComplete, isCompleted, 
               <button
                 key={d.id}
                 disabled={isMatched || isCompleted || !!wrongMatch}
-                onClick={() => setSelectedDefinition(d)}
+                onClick={() => handleSelectDefinition(d)}
                 className={`w-full text-left p-3 rounded-xl border text-xs leading-relaxed transition-all duration-200 cursor-pointer flex items-center justify-between ${cardClass}`}
               >
                 <div className="flex-1">

@@ -34,6 +34,7 @@ import { InteractiveBlank } from "./components/InteractiveBlank";
 import { ExplanationResponse, QuizQuestion, ContentBlock } from "./types";
 import { DEMO_PDF_BASE64, DEMO_EXPLANATION } from "./components/DemoData";
 import { extractMatchingPairs, cleanMatchingTitle, sanitizeBlankPuzzle } from "./utils/puzzleUtils";
+import appLogo from "./assets/images/app_logo_1784998296680.jpg";
 
 // Set worker source to unpkg matching the version installed
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -174,6 +175,7 @@ export default function App() {
   const [panelSize, setPanelSize] = useState<{ width: number; height: number }>({ width: 460, height: 580 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [resizeCorner, setResizeCorner] = useState<"bottom-right" | "bottom-left" | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [posStart, setPosStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [sizeStart, setSizeStart] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -233,16 +235,26 @@ export default function App() {
           panelRef.current.style.left = `${newX}px`;
           panelRef.current.style.top = `${newY}px`;
         }
-      } else if (isResizing) {
+      } else if (isResizing && resizeCorner) {
         const dx = e.clientX - dragStart.x;
         const dy = e.clientY - dragStart.y;
         
-        const newWidth = Math.max(320, Math.min(sizeStart.width + dx, window.innerWidth - panelPos.x - 12));
-        const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - panelPos.y - 12));
-        
-        if (panelRef.current) {
-          panelRef.current.style.width = `${newWidth}px`;
-          panelRef.current.style.height = `${newHeight}px`;
+        if (resizeCorner === "bottom-left") {
+          const newWidth = Math.max(320, Math.min(sizeStart.width - dx, posStart.x + sizeStart.width - 12));
+          const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - posStart.y - 12));
+          const newX = posStart.x + sizeStart.width - newWidth;
+          if (panelRef.current) {
+            panelRef.current.style.width = `${newWidth}px`;
+            panelRef.current.style.height = `${newHeight}px`;
+            panelRef.current.style.left = `${newX}px`;
+          }
+        } else {
+          const newWidth = Math.max(320, Math.min(sizeStart.width + dx, window.innerWidth - posStart.x - 12));
+          const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - posStart.y - 12));
+          if (panelRef.current) {
+            panelRef.current.style.width = `${newWidth}px`;
+            panelRef.current.style.height = `${newHeight}px`;
+          }
         }
       }
     };
@@ -254,15 +266,24 @@ export default function App() {
         const newX = Math.max(0, Math.min(posStart.x + dx, window.innerWidth - (panelMinimized ? 150 : panelSize.width)));
         const newY = Math.max(0, Math.min(posStart.y + dy, window.innerHeight - (panelMinimized ? 40 : 50)));
         setPanelPos({ x: newX, y: newY });
-      } else if (isResizing) {
+      } else if (isResizing && resizeCorner) {
         const dx = e.clientX - dragStart.x;
         const dy = e.clientY - dragStart.y;
-        const newWidth = Math.max(320, Math.min(sizeStart.width + dx, window.innerWidth - panelPos.x - 12));
-        const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - panelPos.y - 12));
-        setPanelSize({ width: newWidth, height: newHeight });
+        if (resizeCorner === "bottom-left") {
+          const newWidth = Math.max(320, Math.min(sizeStart.width - dx, posStart.x + sizeStart.width - 12));
+          const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - posStart.y - 12));
+          const newX = posStart.x + sizeStart.width - newWidth;
+          setPanelSize({ width: newWidth, height: newHeight });
+          setPanelPos({ x: newX, y: posStart.y });
+        } else {
+          const newWidth = Math.max(320, Math.min(sizeStart.width + dx, window.innerWidth - posStart.x - 12));
+          const newHeight = Math.max(220, Math.min(sizeStart.height + dy, window.innerHeight - posStart.y - 12));
+          setPanelSize({ width: newWidth, height: newHeight });
+        }
       }
       setIsDragging(false);
       setIsResizing(false);
+      setResizeCorner(null);
     };
 
     if (isDragging || isResizing) {
@@ -274,7 +295,7 @@ export default function App() {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, isResizing, dragStart, posStart, sizeStart, panelPos, panelSize, panelMinimized, hasDragged]);
+  }, [isDragging, isResizing, resizeCorner, dragStart, posStart, sizeStart, panelPos, panelSize, panelMinimized, hasDragged]);
 
   // Auto scroll chat to bottom
   useEffect(() => {
@@ -292,10 +313,12 @@ export default function App() {
     e.preventDefault();
   };
 
-  const handleResizeMouseDown = (e: React.MouseEvent) => {
+  const handleResizeMouseDown = (e: React.MouseEvent, corner: "bottom-right" | "bottom-left" = "bottom-right") => {
     if (e.button !== 0) return;
     setIsResizing(true);
+    setResizeCorner(corner);
     setDragStart({ x: e.clientX, y: e.clientY });
+    setPosStart({ x: panelPos.x, y: panelPos.y });
     setSizeStart({ width: panelSize.width, height: panelSize.height });
     e.preventDefault();
     e.stopPropagation();
@@ -436,6 +459,10 @@ export default function App() {
   
   const handleGenerateFinalQuiz = async () => {
     if (!pdfBase64) return;
+    if (!customApiKey || !customApiKey.trim()) {
+      addPopupError("API Key Required", "A Gemini API key is required. Please enter your Gemini API key in the API key box.");
+      return;
+    }
     setIsGeneratingFinalQuiz(true);
     setError(null);
     try {
@@ -491,6 +518,10 @@ export default function App() {
   const handleStartOverallQuiz = async () => {
     if (!pdfBase64) {
       addPopupError("No PDF Uploaded", "Please upload a lecture PDF slide deck first.");
+      return;
+    }
+    if (!customApiKey || !customApiKey.trim()) {
+      addPopupError("API Key Required", "A Gemini API key is required. Please enter your Gemini API key in the API key box.");
       return;
     }
     setIsQuizPlanning(true);
@@ -571,6 +602,10 @@ export default function App() {
 
   const handleGenerateMorePuzzles = async () => {
     if (!pdfBase64) return;
+    if (!customApiKey || !customApiKey.trim()) {
+      addPopupError("API Key Required", "A Gemini API key is required. Please enter your Gemini API key in the API key box.");
+      return;
+    }
     setIsQuizGenerating(true);
     setQuizDebugLogs(prev => [...prev, "Contacting AI professor to fill in remaining gaps..."]);
     setError(null);
@@ -644,6 +679,12 @@ export default function App() {
 
   const handleGenerateNotesForRange = async (start: number, _end?: number) => {
     if (!pdfBase64) return;
+    if (!customApiKey || !customApiKey.trim()) {
+      const errMsg = "A Gemini API key is required. Please enter your key in the Gemini API key box.";
+      setError(errMsg);
+      addPopupError("API Key Required", errMsg);
+      return;
+    }
 
     setIsAnalyzing(true);
     setError(null);
@@ -802,6 +843,10 @@ export default function App() {
   const handleSendSubchatMessage = async (customText?: string) => {
     const textToSend = (customText || currentSubchatInput).trim();
     if (!textToSend) return;
+    if (!customApiKey || !customApiKey.trim()) {
+      setSubchatError("A Gemini API key is required. Please enter your key in the Gemini API key box.");
+      return;
+    }
 
     const slideNum = currentPdfPage;
     const blocks = slideExplanations[slideNum] || [];
@@ -1043,9 +1088,10 @@ export default function App() {
             <div className="text-center space-y-3 flex flex-col items-center">
               <div className="relative group">
                 <img 
-                  src="/app_logo.jpg" 
+                  src={appLogo} 
                   alt="PDF Slide Explainer Logo" 
                   referrerPolicy="no-referrer"
+                  onError={(e) => { e.currentTarget.src = "/app_logo.jpg"; }}
                   className="w-16 h-16 rounded-2xl shadow-xl shadow-indigo-500/20 border border-slate-700/60 object-cover transform group-hover:scale-105 transition-all duration-300" 
                 />
               </div>
@@ -1169,12 +1215,7 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label htmlFor="custom-api-key" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                      Gemini API Key{" "}
-                      {serverConfig?.requireUserKey ? (
-                        <span className="text-rose-400 font-bold">(Required)</span>
-                      ) : (
-                        <span className="text-slate-500">(Optional)</span>
-                      )}
+                      Gemini API Key <span className="text-rose-400 font-bold">(Required)</span>
                     </label>
                     <input
                       id="custom-api-key"
@@ -1182,17 +1223,15 @@ export default function App() {
                       placeholder="AIza..."
                       value={customApiKey}
                       onChange={(e) => setCustomApiKey(e.target.value)}
-                      className={`w-full text-xs bg-slate-950 border rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 placeholder:text-slate-600 ${
-                        serverConfig?.requireUserKey && !customApiKey.trim() ? "border-rose-500/50" : "border-slate-800"
+                      className={`w-full text-xs bg-slate-950 border rounded-lg p-2.5 focus:outline-none text-slate-200 placeholder:text-slate-600 ${
+                        !customApiKey.trim() ? "border-rose-500/80 focus:ring-1 focus:ring-rose-500" : "border-slate-800 focus:ring-1 focus:ring-indigo-500"
                       }`}
                     />
-                    <span className="text-[9px] text-slate-500 block leading-tight">
-                      {serverConfig?.requireUserKey ? (
-                        <span className="text-rose-400/80">This public instance strictly requires you to enter your own API key.</span>
-                      ) : serverConfig?.hasServerKey ? (
-                        <span>The server has a global key configured; leave empty to use it, or enter yours for high-volume limits.</span>
+                    <span className="text-[9px] text-slate-400 block leading-tight">
+                      {!customApiKey.trim() ? (
+                        <span className="text-rose-400 font-medium">Required: Enter your Gemini API key to generate notes, interactive quizzes, and tutor chats.</span>
                       ) : (
-                        <span>No global key configured. Please enter your Gemini API key to proceed.</span>
+                        <span className="text-emerald-400 font-medium">Gemini API key entered.</span>
                       )}
                     </span>
                   </div>
@@ -1407,6 +1446,11 @@ export default function App() {
                     <p className="text-xs text-slate-400 leading-relaxed">
                       Choose the slide number to start generating notes from.
                     </p>
+                    {!customApiKey.trim() && (
+                      <p className="text-[11px] text-rose-400 font-medium pt-1">
+                        ⚠️ Gemini API Key is required. Enter your API key below or in settings.
+                      </p>
+                    )}
                   </div>
 
                   <form onSubmit={handleGenerateNotes} className="w-full space-y-4">
@@ -1539,9 +1583,10 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2">
                       <img
-                        src="/app_logo.jpg"
+                        src={appLogo}
                         alt="Logo"
                         referrerPolicy="no-referrer"
+                        onError={(e) => { e.currentTarget.src = "/app_logo.jpg"; }}
                         className="w-5 h-5 rounded-md object-cover border border-indigo-500/30 shrink-0"
                       />
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono transition-all duration-300 ${
@@ -2490,11 +2535,23 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Corner diagonal resize handle (Only shown in expanded state) */}
+                  {/* Corner diagonal resize handles (Only shown in expanded state) */}
+                  {/* Bottom-left resize handle */}
                   <div
-                    onMouseDown={handleResizeMouseDown}
+                    onMouseDown={(e) => handleResizeMouseDown(e, "bottom-left")}
+                    className="absolute bottom-1 left-1 w-4 h-4 cursor-sw-resize flex items-end justify-start p-0.5 select-none text-slate-500 hover:text-slate-300 z-10"
+                    title="Drag to resize panel from bottom-left"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" className="opacity-60">
+                      <path d="M0,0 L10,10 M0,3 L7,10 M0,6 L4,10" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  </div>
+
+                  {/* Bottom-right resize handle */}
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, "bottom-right")}
                     className="absolute bottom-1 right-1 w-4 h-4 cursor-se-resize flex items-end justify-end p-0.5 select-none text-slate-500 hover:text-slate-300 z-10"
-                    title="Drag to resize panel"
+                    title="Drag to resize panel from bottom-right"
                   >
                     <svg width="10" height="10" viewBox="0 0 10 10" className="opacity-60">
                       <path d="M10,0 L0,10 M10,3 L3,10 M10,6 L6,10" stroke="currentColor" strokeWidth="1.5" />
