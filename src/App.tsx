@@ -1040,13 +1040,21 @@ export default function App() {
         {(!explanation && !isAnalyzing) ? (
           /* Welcome and File Upload Screen */
           <div className="w-full max-w-2xl mx-auto py-4 md:py-12 space-y-8 animate-fade-in">
-            <div className="text-center space-y-2">
+            <div className="text-center space-y-3 flex flex-col items-center">
+              <div className="relative group">
+                <img 
+                  src="/app_logo.jpg" 
+                  alt="PDF Slide Explainer Logo" 
+                  referrerPolicy="no-referrer"
+                  className="w-16 h-16 rounded-2xl shadow-xl shadow-indigo-500/20 border border-slate-700/60 object-cover transform group-hover:scale-105 transition-all duration-300" 
+                />
+              </div>
               <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase tracking-widest">
-                Workspace Setup
+                Interactive AI Lecture Notes
               </span>
-              <h2 className="text-xl md:text-2xl font-extrabold tracking-tight text-white">
+              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white flex items-center justify-center gap-2">
                 PDF Slide Explainer
-              </h2>
+              </h1>
               <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
                 Generate structured lecture notes, analogies, and quizzes from your slide PDFs.
               </p>
@@ -1530,6 +1538,12 @@ export default function App() {
                     title="Drag header to reposition"
                   >
                     <div className="flex items-center gap-2">
+                      <img
+                        src="/app_logo.jpg"
+                        alt="Logo"
+                        referrerPolicy="no-referrer"
+                        className="w-5 h-5 rounded-md object-cover border border-indigo-500/30 shrink-0"
+                      />
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono transition-all duration-300 ${
                         isPanelHovered ? "bg-indigo-500/20 text-indigo-300" : "bg-indigo-500/10 text-indigo-400"
                       }`}>
