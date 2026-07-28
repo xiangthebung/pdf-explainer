@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.tmp/
+
+# Secrets: never commit a key
+.env
+.env.*
+!.env.example
+
+# Scratch output from scripts/generate_gps_slides.cjs
+generated_pdf_b64.txt
+
+# Local noise
+.DS_Store
+*.log

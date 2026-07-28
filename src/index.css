@@ -1,80 +1,640 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-@import "tailwindcss";
-@import "katex/dist/katex.min.css";
+@import 'tailwindcss';
+@import 'katex/dist/katex.min.css';
 
-html, body {
-  background-color: #020617; /* Matches slate-950 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Design tokens
+   A restrained, Apple-like palette: neutral surfaces, one accent, hairline
+   separators, generous radii. Values are plain CSS variables so the whole
+   system can flip between light and dark without re-rendering React.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  --c-canvas: #f2f2f5;
+  --c-bg: #f7f7f9;
+  --c-surface: #ffffff;
+  --c-surface-2: #f2f2f5;
+  --c-surface-3: #e9e9ed;
+  --c-elevated: rgba(255, 255, 255, 0.78);
+
+  --c-text: #1d1d1f;
+  --c-text-2: #61616b;
+  --c-text-3: #8e8e97;
+
+  --c-line: rgba(0, 0, 0, 0.09);
+  --c-line-strong: rgba(0, 0, 0, 0.16);
+
+  --c-accent: #0b6fd6;
+  --c-accent-hover: #0a62bd;
+  --c-accent-soft: rgba(11, 111, 214, 0.1);
+  --c-accent-text: #0b6fd6;
+
+  --c-good: #1f8f4e;
+  --c-good-soft: rgba(31, 143, 78, 0.1);
+  --c-warn: #a8620a;
+  --c-warn-soft: rgba(168, 98, 10, 0.1);
+  --c-bad: #c8382f;
+  --c-bad-soft: rgba(200, 56, 47, 0.1);
+
+  /* Study tints. Colour carries meaning here: each kind of thing you can read
+     or practise keeps the same hue everywhere it appears, so the eye learns the
+     shape of the page before it reads a word. */
+  --c-violet: #6d28d9;
+  --c-violet-soft: rgba(109, 40, 217, 0.09);
+  --c-indigo: #3f4bd6;
+  --c-indigo-soft: rgba(63, 75, 214, 0.09);
+  --c-cyan: #0e7490;
+  --c-cyan-soft: rgba(14, 116, 144, 0.1);
+  --c-teal: #0f766e;
+  --c-teal-soft: rgba(15, 118, 110, 0.1);
+  --c-amber: #b45309;
+  --c-amber-soft: rgba(180, 83, 9, 0.11);
+  --c-pink: #be185d;
+  --c-pink-soft: rgba(190, 24, 93, 0.09);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.13), 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+.dark {
+  color-scheme: dark;
+
+  --c-canvas: #000000;
+  --c-bg: #0a0a0b;
+  --c-surface: #17171a;
+  --c-surface-2: #1f1f23;
+  --c-surface-3: #2a2a2f;
+  --c-elevated: rgba(28, 28, 32, 0.76);
+
+  --c-text: #f2f2f5;
+  --c-text-2: #a1a1a9;
+  --c-text-3: #74747c;
+
+  --c-line: rgba(255, 255, 255, 0.1);
+  --c-line-strong: rgba(255, 255, 255, 0.18);
+
+  --c-accent: #3d9bff;
+  --c-accent-hover: #59a9ff;
+  --c-accent-soft: rgba(61, 155, 255, 0.16);
+  --c-accent-text: #7cb9ff;
+
+  --c-good: #43d17c;
+  --c-good-soft: rgba(67, 209, 124, 0.15);
+  --c-warn: #f5b544;
+  --c-warn-soft: rgba(245, 181, 68, 0.15);
+  --c-bad: #ff6b61;
+  --c-bad-soft: rgba(255, 107, 97, 0.15);
+
+  --c-violet: #b79cff;
+  --c-violet-soft: rgba(155, 122, 255, 0.18);
+  --c-indigo: #94a4ff;
+  --c-indigo-soft: rgba(129, 145, 255, 0.18);
+  --c-cyan: #4ad4ee;
+  --c-cyan-soft: rgba(45, 190, 220, 0.18);
+  --c-teal: #3fd9c0;
+  --c-teal-soft: rgba(45, 212, 191, 0.16);
+  --c-amber: #fbc04a;
+  --c-amber-soft: rgba(251, 191, 74, 0.16);
+  --c-pink: #ff8fc0;
+  --c-pink-soft: rgba(255, 122, 178, 0.18);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.6);
 }
 
-/* Custom Scrollbar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@theme inline {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --color-canvas: var(--c-canvas);
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-elevated: var(--c-elevated);
+
+  --color-ink: var(--c-text);
+  --color-ink-2: var(--c-text-2);
+  --color-ink-3: var(--c-text-3);
+
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-accent-text: var(--c-accent-text);
+
+  --color-good: var(--c-good);
+  --color-good-soft: var(--c-good-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-bad: var(--c-bad);
+  --color-bad-soft: var(--c-bad-soft);
+
+  --color-violet: var(--c-violet);
+  --color-violet-soft: var(--c-violet-soft);
+  --color-indigo: var(--c-indigo);
+  --color-indigo-soft: var(--c-indigo-soft);
+  --color-cyan: var(--c-cyan);
+  --color-cyan-soft: var(--c-cyan-soft);
+  --color-teal: var(--c-teal);
+  --color-teal-soft: var(--c-teal-soft);
+  --color-amber: var(--c-amber);
+  --color-amber-soft: var(--c-amber-soft);
+  --color-pink: var(--c-pink);
+  --color-pink-soft: var(--c-pink-soft);
+
+  --radius-xs: 6px;
+  --radius-sm: 9px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-2xl: 28px;
+
+  --shadow-soft: var(--shadow-sm);
+  --shadow-card: var(--shadow-md);
+  --shadow-float: var(--shadow-lg);
+
+  --ease-out-soft: cubic-bezier(0.32, 0.72, 0, 1);
 }
-.custom-scrollbar::-webkit-scrollbar-track {
+
+/* ---------------------------------------------------------------------------
+   Tints
+   A tinted element sets `--tint` once and everything inside it — rail, icon
+   chip, label, dot — inherits the hue. Adding a category is one line, and no
+   component has to know about colour values.
+--------------------------------------------------------------------------- */
+.tint-accent {
+  --tint: var(--c-accent);
+  --tint-soft: var(--c-accent-soft);
+}
+.tint-violet {
+  --tint: var(--c-violet);
+  --tint-soft: var(--c-violet-soft);
+}
+.tint-indigo {
+  --tint: var(--c-indigo);
+  --tint-soft: var(--c-indigo-soft);
+}
+.tint-cyan {
+  --tint: var(--c-cyan);
+  --tint-soft: var(--c-cyan-soft);
+}
+.tint-teal {
+  --tint: var(--c-teal);
+  --tint-soft: var(--c-teal-soft);
+}
+.tint-amber {
+  --tint: var(--c-amber);
+  --tint-soft: var(--c-amber-soft);
+}
+.tint-pink {
+  --tint: var(--c-pink);
+  --tint-soft: var(--c-pink-soft);
+}
+.tint-good {
+  --tint: var(--c-good);
+  --tint-soft: var(--c-good-soft);
+}
+.tint-bad {
+  --tint: var(--c-bad);
+  --tint-soft: var(--c-bad-soft);
+}
+
+/* A card that wears its category: hairline in the hue, a wash that fades out
+   before it reaches the text, and a colour rail down the leading edge. */
+.tint-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--tint, var(--c-accent)) 24%, transparent);
+  background-color: var(--c-surface);
+  background-image: linear-gradient(
+    170deg,
+    var(--tint-soft, var(--c-accent-soft)) 0%,
+    transparent 62%
+  );
+}
+.tint-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--tint, var(--c-accent));
+  opacity: 0.85;
+}
+.tint-chip {
+  background: var(--tint-soft, var(--c-accent-soft));
+  color: var(--tint, var(--c-accent));
+}
+.tint-text {
+  color: var(--tint, var(--c-accent));
+}
+.tint-ring {
+  border-color: color-mix(in srgb, var(--tint, var(--c-accent)) 45%, transparent);
+}
+.tint-fill {
+  background: var(--tint, var(--c-accent));
+  color: #fff;
+}
+
+/* Progress that feels like getting somewhere. */
+.bar-rainbow {
+  background-image: linear-gradient(
+    90deg,
+    var(--c-violet) 0%,
+    var(--c-accent) 42%,
+    var(--c-cyan) 74%,
+    var(--c-teal) 100%
+  );
+}
+.text-rainbow {
+  background-image: linear-gradient(100deg, var(--c-violet), var(--c-accent) 55%, var(--c-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Soft coloured light behind the upload hero. Decorative only. */
+.hero-glow {
+  position: relative;
+  isolation: isolate;
+}
+.hero-glow::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -18% -12% auto -12%;
+  height: 320px;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 55% at 18% 12%, color-mix(in srgb, var(--c-violet) 26%, transparent), transparent 70%),
+    radial-gradient(34% 50% at 82% 6%, color-mix(in srgb, var(--c-cyan) 24%, transparent), transparent 72%),
+    radial-gradient(30% 45% at 50% 0%, color-mix(in srgb, var(--c-pink) 18%, transparent), transparent 74%);
+  filter: blur(14px);
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+--------------------------------------------------------------------------- */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis-weight: none;
+  overscroll-behavior: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--c-accent-soft);
+}
+
+button,
+[role='button'] {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Thin, unobtrusive scrollbars that only assert themselves on hover. */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-line-strong) transparent;
+  scrollbar-gutter: stable;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-area::-webkit-scrollbar-track {
   background: transparent;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 10px;
+.scroll-area::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+.scroll-area:hover::-webkit-scrollbar-thumb {
+  background-color: var(--c-line-strong);
 }
 
-/* Hide scrollbars for chrome/safari/opera/firefox */
-.scrollbar-none::-webkit-scrollbar {
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
   display: none;
 }
-.scrollbar-none {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+
+/* ---------------------------------------------------------------------------
+   Motion
+--------------------------------------------------------------------------- */
+@keyframes ls-fade-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ls-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ls-sheet-up {
+  from {
+    transform: translate3d(0, 12px, 0);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes ls-shimmer {
+  from {
+    background-position: -160% 0;
+  }
+  to {
+    background-position: 260% 0;
+  }
+}
+@keyframes ls-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
 }
 
-/* Smooth Animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+.animate-in {
+  animation: ls-fade-in 0.32s var(--ease-out-soft) both;
 }
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
+.animate-pop {
+  animation: ls-scale-in 0.24s var(--ease-out-soft) both;
 }
-
-/* Mermaid & SVG Diagram Sizing - Fill available space */
-.mermaid-container {
-  width: 100% !important;
-  display: flex !important;
-  justify-content: center !important;
-  align-items: center !important;
+.animate-sheet {
+  animation: ls-sheet-up 0.3s var(--ease-out-soft) both;
+}
+.animate-nudge {
+  animation: ls-nudge 0.34s ease-in-out;
 }
 
-.mermaid-container svg {
-  width: 100% !important;
-  max-width: 100% !important;
-  height: auto !important;
-  min-height: 220px;
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--c-surface-2) 0%,
+    var(--c-surface-3) 40%,
+    var(--c-surface-2) 80%
+  );
+  background-size: 200% 100%;
+  animation: ls-shimmer 1.6s linear infinite;
 }
 
-/* KaTeX Math Formatting Consistency */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Reading surface: notes, chat answers, explanations
+--------------------------------------------------------------------------- */
+.prose-study {
+  color: var(--c-text);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+.prose-study > * + * {
+  margin-top: 0.85em;
+}
+.prose-study h1,
+.prose-study h2,
+.prose-study h3,
+.prose-study h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+  color: var(--c-text);
+  line-height: 1.25;
+}
+.prose-study h1 {
+  font-size: 1.35rem;
+  font-weight: 640;
+  margin-top: 1.4em;
+}
+.prose-study h2 {
+  font-size: 1.15rem;
+  font-weight: 620;
+  margin-top: 1.3em;
+}
+.prose-study h3 {
+  font-size: 1rem;
+  font-weight: 620;
+  margin-top: 1.2em;
+}
+.prose-study h4 {
+  font-size: 0.9375rem;
+  font-weight: 620;
+}
+.prose-study :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+.prose-study strong {
+  font-weight: 600;
+  color: var(--c-text);
+}
+.prose-study em {
+  font-style: italic;
+}
+.prose-study a {
+  color: var(--c-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--c-accent) 40%, transparent);
+}
+.prose-study a:hover {
+  text-decoration-color: var(--c-accent);
+}
+.prose-study ul,
+.prose-study ol {
+  padding-left: 1.35em;
+}
+.prose-study ul {
+  list-style: disc;
+}
+.prose-study ol {
+  list-style: decimal;
+}
+.prose-study li + li {
+  margin-top: 0.3em;
+}
+.prose-study li::marker {
+  color: var(--c-text-3);
+}
+.prose-study blockquote {
+  border-left: 2px solid var(--c-accent);
+  padding: 0.1em 0 0.1em 0.9em;
+  color: var(--c-text-2);
+}
+.prose-study hr {
+  border: 0;
+  border-top: 1px solid var(--c-line);
+  margin: 1.6em 0;
+}
+.prose-study table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose-study th,
+.prose-study td {
+  border: 1px solid var(--c-line);
+  padding: 0.5em 0.7em;
+  text-align: left;
+  vertical-align: top;
+}
+.prose-study th {
+  background: var(--c-surface-2);
+  font-weight: 600;
+}
+.prose-study :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.855em;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: 5px;
+  padding: 0.1em 0.34em;
+  overflow-wrap: anywhere;
+}
+.prose-study img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+/* Compact variant used inside quiz options, chips and table cells */
+.prose-inline > * {
+  margin: 0 !important;
+  display: inline;
+}
+.prose-inline {
+  display: inline;
+}
+
+/* ---------------------------------------------------------------------------
+   Math
+--------------------------------------------------------------------------- */
+.katex {
+  font-size: 1.04em;
+  color: inherit;
+}
 .katex-display {
-  margin: 0.75em 0 !important;
+  margin: 0.9em 0;
+  padding: 0.35em 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0.25em 0;
+  scrollbar-width: thin;
+}
+.katex-display > .katex {
+  white-space: normal;
+}
+.katex .katex-error,
+.katex-error {
+  color: var(--c-bad) !important;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
 }
 
-.katex {
-  font-size: 1.05em !important;
-  color: #f1f5f9 !important;
+/* ---------------------------------------------------------------------------
+   Diagrams (Mermaid + inline SVG) — always fluid, never overflowing
+--------------------------------------------------------------------------- */
+.figure-frame {
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-lg);
+  background: var(--c-surface);
+  overflow: hidden;
+}
+.figure-body {
+  padding: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.figure-body svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.figure-body[data-fluid='true'] svg {
+  width: 100%;
+}
+.figure-body .mermaid-svg {
+  max-height: min(60vh, 520px);
 }
 
-/* Improve KaTeX inline math color and contrast inside dark badges and buttons */
-button .katex, .badge .katex {
-  color: inherit !important;
+/* KaTeX inside interactive chips should inherit the chip colour */
+button .katex,
+.chip .katex {
+  color: inherit;
 }

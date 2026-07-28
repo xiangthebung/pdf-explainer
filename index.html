@@ -2,14 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PDF Slide Explainer | AI-Powered Lecture Notes & Quizzes</title>
-    <link rel="icon" type="image/jpeg" href="/app_logo.jpg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <title>PDF Explainer — Understand your lecture slides</title>
+    <meta
+      name="description"
+      content="Turn lecture slide PDFs into a calm study workspace: slide-by-slide explanations, a slide-aware tutor, and active recall practice."
+    />
+    <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
     <link rel="apple-touch-icon" href="/app_logo.jpg" />
+    <script>
+      // Apply the saved appearance before first paint to avoid a flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem('pdfx.appearance');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var dark = stored === 'dark' || ((!stored || stored === 'system') && prefersDark);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {
+          /* storage can be blocked; default to light */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

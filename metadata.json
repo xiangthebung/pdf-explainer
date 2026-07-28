@@ -1,6 +1,6 @@
 {
-  "name": "PDF Slide Explainer",
-  "description": "Upload lecture slide PDFs and generate structured detailed notes, intuition, and examples mapped to each slide in an overlay view.",
+  "name": "PDF Explainer",
+  "description": "Turn lecture slide PDFs into a calm study workspace: slide-by-slide explanations, a slide-aware tutor, and active recall practice.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
