@@ -10,8 +10,17 @@
       name="description"
       content="Turn lecture slide PDFs into a calm study workspace: slide-by-slide explanations, a slide-aware tutor, and active recall practice."
     />
-    <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
-    <link rel="apple-touch-icon" href="/app_logo.jpg" />
+    <!--
+      These were two 964 KB JPEGs, byte-identical to each other, and neither was a
+      JPEG: 67% of each file was U+FFFD, the replacement character, so the image
+      had been read as UTF-8 text and written back out. There was no icon to
+      recover and there never had been one on screen -- just 1.9 MB shipped in
+      every build to render nothing. Redrawn as an SVG, with a PNG for the
+      consumers that want a raster. Together they are 4.3 KB.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
       // Apply the saved appearance before first paint to avoid a flash.
       (function () {
