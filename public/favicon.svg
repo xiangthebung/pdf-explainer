@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PDF Explainer">
+  <title>PDF Explainer</title>
+  <!--
+    The explanation sitting on top of the slide, which is the whole product.
+
+    Two shapes and nothing else, because this has to survive being drawn at 16px in
+    a browser tab. An earlier attempt at more detail turned into three grey pixels.
+    Sized on a 64 unit grid so every edge lands on a whole pixel at 16, 32 and 64.
+  -->
+  <rect width="64" height="64" rx="14" fill="#17191c" />
+
+  <!-- The slide. 16:10, the shape of a lecture deck. -->
+  <rect x="10" y="14" width="38" height="24" rx="2.5" fill="#e8e8ea" />
+  <rect x="15" y="20" width="20" height="2.5" rx="1.25" fill="#a9abb2" />
+  <rect x="15" y="26" width="27" height="2.5" rx="1.25" fill="#c6c8ce" />
+
+  <!-- The note laid over it, in the accent the app uses for generated notes. -->
+  <rect x="24" y="32" width="30" height="18" rx="3" fill="#f0b45c" />
+  <rect x="29" y="38" width="20" height="2.5" rx="1.25" fill="#8a5f16" />
+  <rect x="29" y="43" width="13" height="2.5" rx="1.25" fill="#8a5f16" opacity="0.72" />
+</svg>

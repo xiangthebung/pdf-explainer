@@ -1,5 +1,28 @@
-import * as pdfjs from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+/*
+ * pdf.js, legacy build, on both the main thread and in the worker.
+ *
+ * The modern build calls `Uint8Array.prototype.toHex`, which is a Stage 3
+ * proposal that arrived in Chrome 140, Safari 18.2 and Firefox 133. Anything
+ * older gets `UnknownErrorException: a.toHex is not a function` and the app shows
+ * "This deck will not open" for every PDF, including its own demo deck. Measured
+ * in real browsers: Chrome 139 has no `toHex` and cannot open a deck; Chrome 150
+ * can.
+ *
+ * Both imports have to move together. The failure surfaces as an
+ * `UnknownErrorException`, which is how pdf.js reports something that went wrong
+ * inside the worker, so redirecting only the bare specifier above would leave the
+ * modern worker in place and the bug exactly where it was.
+ *
+ * Cost of the legacy build, minified: about 56 KB on the entry and 48 KB on the
+ * worker. Using it is what pdf.js documents for environments without the newest
+ * built-ins, and it is a better trade than an app that cannot open a file on last
+ * year's browser.
+ *
+ * Types still come from the package root; the legacy entry ships an empty
+ * declaration file.
+ */
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 
 /**
