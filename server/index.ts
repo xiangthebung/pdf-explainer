@@ -8,6 +8,13 @@ async function start(): Promise<void> {
   const app = express();
 
   app.disable('x-powered-by');
+  // A hop count when it reads as one, otherwise passed through so 'loopback', a
+  // subnet or a comma-separated list all work. See config.trustProxy for why this
+  // has no default.
+  if (config.trustProxy) {
+    const hops = Number(config.trustProxy);
+    app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : config.trustProxy);
+  }
   app.use(express.json({ limit: jsonBodyLimit }));
 
   // Never cache API responses; they are user- and key-specific.

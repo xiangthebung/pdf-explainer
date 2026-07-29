@@ -26,6 +26,22 @@ export const config = {
     windowMs: parseNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
     max: parseNumber(process.env.RATE_LIMIT_MAX, 40),
   },
+  /**
+   * How many reverse proxies stand in front of this server, or empty for none.
+   *
+   * The rate limiter above keys on `req.ip`, and that address is only the caller's
+   * if Express has been told what to trust. Unset behind a proxy, every request
+   * appears to come from the proxy, so the whole internet shares one bucket and the
+   * abuse guard becomes a self-inflicted outage. Set too permissively, a caller can
+   * put whatever it likes in `X-Forwarded-For` and get a fresh bucket per request,
+   * so the guard becomes decoration.
+   *
+   * The right value is the number of hops actually in front of the process, which
+   * only whoever deployed it knows. So it is configuration with no default rather
+   * than a guess: empty is correct for running it locally, and every platform that
+   * terminates TLS for you needs at least `TRUST_PROXY=1`.
+   */
+  trustProxy: (process.env.TRUST_PROXY ?? '').trim(),
 } as const;
 
 export const jsonBodyLimit = `${config.maxUploadMb + 6}mb`;
