@@ -2,6 +2,14 @@ node_modules/
 dist/
 .tmp/
 
+# The Node server bundle. It lives outside dist/ on purpose: dist/ is what the
+# Cloudflare Worker publishes as static assets, so a server bundle in there would
+# be served to the public alongside the client.
+build/
+
+# Wrangler and Miniflare state
+.wrangler/
+
 # Secrets: never commit a key
 .env
 .env.*

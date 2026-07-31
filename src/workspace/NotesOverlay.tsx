@@ -13,6 +13,11 @@ import { IconButton } from '../components/ui/Button';
  */
 export function NotesOverlay({
   width,
+  minWidth,
+  maxWidth,
+  resizing,
+  onResizePointerDown,
+  onResizeKeyDown,
   pinned,
   onTogglePin,
   onDock,
@@ -20,6 +25,11 @@ export function NotesOverlay({
   children,
 }: {
   width: number;
+  minWidth: number;
+  maxWidth: number;
+  resizing: boolean;
+  onResizePointerDown: (event: React.PointerEvent) => void;
+  onResizeKeyDown: (event: React.KeyboardEvent) => void;
   pinned: boolean;
   onTogglePin: () => void;
   onDock: () => void;
@@ -63,7 +73,8 @@ export function NotesOverlay({
     };
   }, []);
 
-  const active = pinned || awake || greeting;
+  // A drag has to keep the card awake even though the pointer is outside it by then.
+  const active = pinned || awake || greeting || resizing;
 
   return (
     <div
@@ -71,14 +82,56 @@ export function NotesOverlay({
       aria-label="Floating notes"
       style={{ width: `${width}px` }}
       className={cx(
-        'group/notes absolute right-3 top-3 bottom-[74px] z-20 flex max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-[20px] border transition-[opacity,box-shadow,border-color] duration-300 ease-out',
+        'group/notes absolute right-3 top-3 bottom-[74px] z-20 flex max-w-[calc(100%-2rem)] flex-col rounded-[20px] border transition-[opacity,box-shadow,border-color] duration-300 ease-out',
         active
           ? 'border-line-strong opacity-100 shadow-float'
           : 'border-line/60 opacity-[0.26] shadow-soft hover:opacity-100',
       )}
     >
-      {/* Frosted backing: the slide shows through, the text stays legible. */}
-      <div className="absolute inset-0 -z-10 bg-elevated backdrop-blur-2xl" aria-hidden="true" />
+      {/* Frosted backing: the slide shows through, the text stays legible.
+          `overflow-hidden` moved off the card and onto the content below, because the
+          resize handle has to reach a few pixels outside the rounded border to be grabbable
+          and was being clipped away by it. */}
+      <div
+        className="absolute inset-0 -z-10 overflow-hidden rounded-[20px] bg-elevated backdrop-blur-2xl"
+        aria-hidden="true"
+      />
+
+      {/* The left edge, draggable.
+          The card floats over the slide and is anchored to the right, so its left edge is
+          the one that changes its width — the same edge, moving the same way, as the split
+          view's divider. Both are handles onto `usePanelResize`; before it, this edge did
+          nothing and the notes could only be resized in the other layout.
+
+          A real `separator` with its values and arrow keys, not a bare drag target: this is
+          the same control as the divider and it should be the same control to a screen
+          reader and to somebody without a mouse. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the floating notes"
+        aria-valuenow={width}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        tabIndex={0}
+        onPointerDown={onResizePointerDown}
+        onKeyDown={onResizeKeyDown}
+        className={cx(
+          'absolute inset-y-4 -left-1 z-30 w-2 cursor-col-resize rounded-full transition-colors',
+          'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
+          resizing ? 'bg-accent' : 'bg-transparent',
+        )}
+      >
+        {/* A grip, so the edge looks like something you can pull. Only once the card is
+            awake — an idle overlay at a quarter opacity should not sprout handles. */}
+        <span
+          aria-hidden="true"
+          className={cx(
+            'pointer-events-none absolute left-1/2 top-1/2 h-8 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-opacity',
+            active ? 'bg-line-strong opacity-100' : 'opacity-0',
+          )}
+        />
+      </div>
 
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
         <span className="ml-1 flex-1 select-none text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
@@ -100,7 +153,7 @@ export function NotesOverlay({
         </IconButton>
       </div>
 
-      <div className="min-h-0 flex-1">{children}</div>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-b-[20px]">{children}</div>
     </div>
   );
 }

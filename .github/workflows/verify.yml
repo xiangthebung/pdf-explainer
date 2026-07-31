@@ -47,7 +47,7 @@ jobs:
       # That is the default and what the smoke test expects.
       - name: Start the production server
         run: |
-          NODE_ENV=production node dist/server.cjs &
+          NODE_ENV=production node build/server.cjs &
           for attempt in $(seq 1 30); do
             if curl -sf http://localhost:3000 > /dev/null; then
               echo "server up after ${attempt}s"

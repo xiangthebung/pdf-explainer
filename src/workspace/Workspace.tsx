@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PanelLeftOpen, PanelRightClose, Presentation } from 'lucide-react';
-import { clamp, cx } from '../lib/utils';
+import { cx } from '../lib/utils';
 import { IconButton } from '../components/ui/Button';
 import { useIsCompact } from '../hooks/useMediaQuery';
 import { useShortcuts } from '../hooks/useKeyboard';
+import { usePanelResize } from '../hooks/usePanelResize';
 import { usePreferences } from '../state/PreferencesContext';
 import { useStudy } from '../state/StudyContext';
 import { Segmented } from '../components/ui/Surface';
@@ -39,6 +40,8 @@ function PageCountSync(): null {
 
 const MIN_PANEL = 360;
 const MAX_PANEL = 720;
+/** How much of the window the slide keeps, however wide the notes are dragged. */
+const MIN_STAGE = 360;
 
 /**
  * The stub that a collapsed panel leaves behind. A hidden panel with no visible
@@ -75,45 +78,33 @@ export function Workspace(): React.JSX.Element {
   const [tab, setTab] = useState<StudyTab>('notes');
   const [compactView, setCompactView] = useState<CompactView>('slide');
   const [overlay, setOverlay] = useState<Overlay>('none');
-  const [panelWidth, setPanelWidth] = useState(prefs.panelWidth);
-  const [dragging, setDragging] = useState(false);
   const frameRef = useRef<HTMLDivElement | null>(null);
   /** Layout to put back when "slide only" ends. */
   const beforeFocus = useRef<{ panelCollapsed: boolean; filmstrip: boolean } | null>(null);
   /** Which notes layout "show notes" should return to. */
   const restoreRef = useRef<Layout>(prefs.panelMode === 'overlay' ? 'overlay' : 'split');
 
-  useEffect(() => setPanelWidth(prefs.panelWidth), [prefs.panelWidth]);
-
-  /* Divider drag. Width is committed to preferences on release, not per frame. */
-  const onDividerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const frame = frameRef.current;
-      if (!frame) return;
-      setDragging(true);
-      const startX = event.clientX;
-      const startWidth = panelWidth;
-      const maxWidth = Math.min(MAX_PANEL, frame.clientWidth - 360);
-
-      const onMove = (move: PointerEvent) => {
-        setPanelWidth(clamp(startWidth - (move.clientX - startX), MIN_PANEL, Math.max(MIN_PANEL, maxWidth)));
-      };
-      const onUp = () => {
-        setDragging(false);
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        setPanelWidth((current) => {
-          update({ panelWidth: current });
-          return current;
-        });
-      };
-
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-    },
-    [panelWidth, update],
-  );
+  /**
+   * One width for both layouts, and one way to change it.
+   *
+   * The drag used to be written inline here and wired only to the split view's divider, so
+   * the floating overlay took the same number and could not alter it — resizable in one
+   * mode, fixed in the other, for no reason a person could work out from looking at it.
+   * `usePanelResize` owns the pointer bookkeeping; the divider and the overlay's edge are
+   * two handles onto it.
+   *
+   * `reserve` is the slide's floor. `max` alone is not enough on a narrow window, where
+   * 720px of notes would leave nothing to read them against.
+   */
+  const resize = usePanelResize({
+    committed: prefs.panelWidth,
+    min: MIN_PANEL,
+    max: MAX_PANEL,
+    roomFor: () => frameRef.current?.clientWidth ?? 0,
+    reserve: MIN_STAGE,
+    commit: (panelWidth) => update({ panelWidth }),
+  });
+  const panelWidth = resize.width;
 
   const panelOpen = !prefs.panelCollapsed;
   /**
@@ -302,6 +293,11 @@ export function Workspace(): React.JSX.Element {
                 {overlayNotes && panelOpen && !focusMode ? (
                   <NotesOverlay
                     width={panelWidth}
+                    minWidth={MIN_PANEL}
+                    maxWidth={MAX_PANEL}
+                    resizing={resize.dragging}
+                    onResizePointerDown={resize.onPointerDown}
+                    onResizeKeyDown={resize.onKeyDown}
                     pinned={prefs.overlayPinned}
                     onTogglePin={() => update({ overlayPinned: !prefs.overlayPinned })}
                     onDock={() => update({ panelMode: 'docked' })}
@@ -320,19 +316,14 @@ export function Workspace(): React.JSX.Element {
                   aria-orientation="vertical"
                   aria-label="Resize the study panel"
                   tabIndex={0}
-                  onPointerDown={onDividerDown}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      const next = clamp(panelWidth + (event.key === 'ArrowLeft' ? 24 : -24), MIN_PANEL, MAX_PANEL);
-                      setPanelWidth(next);
-                      update({ panelWidth: next });
-                    }
-                  }}
+                  aria-valuenow={panelWidth}
+                  aria-valuemin={MIN_PANEL}
+                  aria-valuemax={MAX_PANEL}
+                  onPointerDown={resize.onPointerDown}
+                  onKeyDown={resize.onKeyDown}
                   className={cx(
                     'group relative w-px shrink-0 cursor-col-resize bg-line transition-colors hover:bg-accent',
-                    dragging && 'bg-accent',
+                    resize.dragging && 'bg-accent',
                   )}
                 >
                   {/* Wider invisible hit area for the drag. */}

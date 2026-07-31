@@ -1,10 +1,22 @@
+/**
+ * The Node entry point: local development and the smoke suite.
+ *
+ * Production is `worker/index.ts`. Both are adapters over `server/api.ts`; see the note
+ * there for why the API stopped being an Express app.
+ *
+ * `dotenv` is imported here rather than in `server/config.ts` because it is Node-only and
+ * config is now shared with a Worker, where there is no `.env` file and no `process` to
+ * read at import time. Whoever owns the entry point owns where settings come from.
+ */
+import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
-import { config, jsonBodyLimit } from './config';
+import { config, configure, jsonBodyLimit } from './config';
 import { log } from './log';
 import { createApiRouter } from './routes';
 
 async function start(): Promise<void> {
+  configure(process.env);
   const app = express();
 
   app.disable('x-powered-by');
@@ -15,7 +27,7 @@ async function start(): Promise<void> {
     const hops = Number(config.trustProxy);
     app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : config.trustProxy);
   }
-  app.use(express.json({ limit: jsonBodyLimit }));
+  app.use(express.json({ limit: jsonBodyLimit() }));
 
   // Never cache API responses; they are user- and key-specific.
   app.use('/api', (_req, res, next) => {

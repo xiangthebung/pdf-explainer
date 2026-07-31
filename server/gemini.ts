@@ -1,4 +1,15 @@
-import { GoogleGenAI, type Content, type Part } from '@google/genai';
+/**
+ * `@google/genai/web`, not `@google/genai`.
+ *
+ * The package ships two builds: a Node one that reaches for `node:` modules, and a web one
+ * that is pure `fetch`. The bare specifier resolves to the Node build, which cannot be
+ * bundled for a Cloudflare Worker — and this module is now imported by both the Express
+ * server and the Worker. The web build runs perfectly well on Node 22 (it wants `fetch`,
+ * `AbortSignal` and Web Crypto, all of which are there) and is the only one that runs on
+ * both, so it is the one to use in both. Nothing here needs the Node-only surface: no file
+ * uploads, no tokenizer, just `models.generateContent` with inline data.
+ */
+import { GoogleGenAI, type Content, type Part } from '@google/genai/web';
 import { buildModelChain } from '../shared/models';
 import { ApiError, fromModelError, missingKey } from './errors';
 import { config } from './config';
@@ -18,9 +29,20 @@ export function resolveApiKey(userKey: unknown): string {
   throw missingKey();
 }
 
+/**
+ * Accept both raw base64 and data URLs.
+ *
+ * The prefix is looked for in the first two hundred characters rather than with
+ * `includes(',')` over the whole string. A base64 PDF is millions of characters and a data
+ * URL's comma is always within the first fifty of them — `data:application/pdf;base64,` —
+ * so scanning the rest is a few megabytes of pointless work per request. That matters more
+ * than it looks on a platform billed by CPU time.
+ */
+const DATA_URL_HEAD = 200;
+
 export function pdfPart(base64: string): Part {
-  // Accept both raw base64 and data URLs.
-  const data = base64.includes(',') ? base64.slice(base64.indexOf(',') + 1) : base64;
+  const comma = base64.lastIndexOf(',', DATA_URL_HEAD);
+  const data = comma === -1 ? base64 : base64.slice(comma + 1);
   return { inlineData: { data, mimeType: 'application/pdf' } };
 }
 

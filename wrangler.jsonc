@@ -1,0 +1,48 @@
+{
+  "name": "pdf-explainer",
+  "main": "worker/index.ts",
+  // Pinned to what the `workerd` binary in this repo's wrangler actually supports.
+  // A later date deploys fine — the edge runs ahead of the local binary — but breaks
+  // `wrangler dev`, which refuses to start with "requires compatibility date X, but
+  // the newest date supported by this server binary is Y". A date you cannot run
+  // locally is a date nobody tests against.
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+
+  // The built client, and the reason this file exists.
+  //
+  // There was no Worker here at all: the deploy was `dist/` as static assets, and
+  // Cloudflare's asset handler answers GET and HEAD. So every `POST /api/explain`
+  // came back 405 Method Not Allowed from the asset server, which the app reported
+  // as "Could not generate notes — Request failed (405)". Nothing was throwing; the
+  // API was simply not deployed. See the note at the top of `server/api.ts`.
+  //
+  // `run_worker_first` is the actual fix. Without it the asset handler gets first
+  // refusal on every path, and an `/api/*` request that matches no file would be
+  // answered by the SPA fallback below — a 200 with `index.html` in it, which the
+  // client would then try to parse as JSON. With it, those paths reach the Worker
+  // and nothing else does.
+  //
+  // `single-page-application` for everything else: the client owns its own routes,
+  // so an unknown path is a route, not a 404.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  }
+
+  // No secrets are declared, and none are needed. With no `GEMINI_API_KEY` bound,
+  // `requireUserKey` is true and every caller brings their own key — which is the
+  // mode this is deployed in. To share one instead:
+  //
+  //   npx wrangler secret put GEMINI_API_KEY
+  //
+  // and set `REQUIRE_USER_API_KEY=true` as a var if bring-your-own should stay
+  // mandatory even with a server key present. Everything else — MAX_UPLOAD_MB,
+  // REQUEST_TIMEOUT_MS, CHAT_TIMEOUT_MS, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX —
+  // has a working default in `server/config.ts` and can be overridden with a var.
+}
