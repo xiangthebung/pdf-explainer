@@ -28,11 +28,19 @@ src/            browser app
   state/        reducer + contexts (study session, preferences)
   lib/          API client, pdf.js engine, storage, sanitisers, export
 shared/         types, model catalogue, normaliser, Markdown pipeline (client + server)
-server/         Express API: prompts, response schemas, JSON repair, Gemini client
+server/         the API: prompts, response schemas, JSON repair, Gemini client
+  api.ts        every endpoint, with no web framework in it
+  routes.ts     Express adapter — local development and the smoke suite
+  index.ts      the Node entry point
+worker/         Cloudflare Worker adapter — production
 tests/          vitest suites plus generated fixture decks
 ```
 
-Three API routes, all cancellable and all validated on the way in and out:
+The API takes a parsed body and an abort signal and returns a status and a value,
+which is what lets the same four endpoints run on both things this deploys as. See
+**Deployment** below for why that matters more than it sounds.
+
+Four API routes, all cancellable and all validated on the way in and out:
 
 | Route | Does |
 | --- | --- |
@@ -124,8 +132,14 @@ toolbar, and it names what it does:
 | Layout | The slide gets | The notes |
 | --- | --- | --- |
 | Split | Its half of the window | Beside the slide, resizable |
-| Overlay | The whole window | Floating on top, translucent until you reach for them — pin to keep them awake |
+| Overlay | The whole window | Floating on top, resizable, translucent until you reach for them — pin to keep them awake |
 | Slide only | The whole window | Hidden, with a labelled way back |
+
+Both layouts share one width and one way to change it (`src/hooks/usePanelResize.ts`):
+drag the edge, or focus it and use the arrow keys. They did not always — the split
+view had a handle and the overlay took the same number as a read-only prop, so the
+notes resized in one mode and were fixed in the other for no reason a person could
+infer.
 
 Full screen is a separate line in the same menu, because it is a separate
 question: it hides the browser, and it composes with any of the three layouts.
@@ -138,16 +152,53 @@ for next time.
 | Command | Does |
 | --- | --- |
 | `npm run dev` | Express + Vite in middleware mode on `:3000` |
-| `npm run build` | Client bundle into `dist/`, server bundled to `dist/server.cjs` |
-| `npm start` | Serve the production build (`NODE_ENV=production`) |
+| `npm run build` | Client bundle into `dist/`, Node server bundled to `build/server.cjs` |
+| `npm start` | Serve the production build with Node (`NODE_ENV=production`) |
+| `npm run deploy` | Build, then `wrangler deploy` to Cloudflare |
+| `npm run worker:dev` | The Worker locally, on `workerd`, with the real assets binding |
 | `npm run lint` | `tsc --noEmit` (strict) |
-| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation |
+| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, deploy shape |
 | `npm run fixtures` | Regenerate the fixture decks in `tests/fixtures/` |
+
+The Node bundle goes to `build/`, not `dist/`, because `dist/` is uploaded to
+Cloudflare wholesale — a server bundle in there would be published to the public
+alongside the client, sourcemap and all.
 
 `node scripts/smoke.mjs --url http://localhost:3000` drives a real browser through
 the demo deck — rendering, practice, search, export, dark mode and the phone
 layout — and writes screenshots to `.tmp/smoke/`. It needs a Chromium; set
 `CHROME_PATH` if it cannot find one.
+
+## Deployment
+
+Cloudflare Workers. `npm run deploy`.
+
+Live at [pdf-explainer.xiangli3625.workers.dev](https://pdf-explainer.xiangli3625.workers.dev/).
+
+`wrangler.jsonc` binds `dist/` as static assets and gives `/api/*` to the Worker via
+`run_worker_first`; everything else falls back to `index.html`, because the client
+owns its own routes. No secrets are needed — with no `GEMINI_API_KEY` bound, every
+caller brings their own key, which is the mode this runs in. `wrangler secret put
+GEMINI_API_KEY` switches it to a shared key.
+
+**Why there are two entry points.** This app was moved to Workers with only its
+client, because `npm run build` produced a CommonJS Node bundle of an Express server
+and Workers cannot run one. So the deploy was `dist/` as static assets — and
+Cloudflare's asset handler answers `GET` and `HEAD`, so every `POST /api/explain`
+came back **405 Method Not Allowed** and the app reported "Could not generate notes —
+Request failed (405)". Nothing threw. The server was not there.
+
+Every test passed throughout, because every test ran the Node artifact. So
+`tests/deployTarget.test.ts` now asserts the *shape* of the deploy rather than any
+behaviour: there is a Worker, it is the entry point, every API path reaches it before
+the asset handler, and the server bundle is not a public asset. A build that produces
+an artifact for a platform that does not run it is not the kind of mistake a unit test
+can see.
+
+One thing to watch: the Gemini call is I/O, and waiting on `fetch` costs no CPU, so a
+ninety-second generation is nearly free. Parsing the request is not — a base64 PDF
+arrives inside a JSON body. `MAX_UPLOAD_MB` is the lever if large decks start failing
+where small ones succeed.
 
 ## What the fixtures cover
 
