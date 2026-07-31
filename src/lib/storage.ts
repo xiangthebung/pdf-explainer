@@ -22,7 +22,22 @@ export interface Preferences {
   practiceModel: string;
   style: StudyStyle;
   customInstructions: string;
+  /** Width of the *docked* study panel. The floating one has its own rect. */
   panelWidth: number;
+  /**
+   * Where the floating notes are, and how big, in pixels inside the slide stage.
+   *
+   * `null` until they have been moved or resized by hand, which is what lets the default
+   * be computed from the stage instead of guessed — see `overlayFallback` in Workspace. A
+   * stored rect that no longer fits is clamped for display rather than rewritten, so
+   * shrinking the window does not quietly overwrite the size you chose.
+   *
+   * Separate from `panelWidth` on purpose. The docked panel is a column whose one degree of
+   * freedom is its width; the floating one is a window with four. Sharing a number between
+   * them was right while the overlay was pinned to an edge and could only get wider, and
+   * became wrong the moment it could be moved.
+   */
+  overlayRect: OverlayRect | null;
   /** Study panel hidden, so the slide gets the whole window. */
   panelCollapsed: boolean;
   /**
@@ -38,6 +53,32 @@ export interface Preferences {
 
 export type PanelMode = 'docked' | 'overlay';
 
+export interface OverlayRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Four finite numbers or nothing.
+ *
+ * Preferences come out of `localStorage`, which is to say out of whatever was there last
+ * time — an older build of this app, a half-written value, someone's console. A rect with a
+ * `NaN` in it puts the notes at `left: NaNpx`, which renders them at zero and looks like
+ * they have vanished.
+ */
+function readOverlayRect(value: unknown): OverlayRect | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Record<string, unknown>;
+  const numbers = (['x', 'y', 'width', 'height'] as const).map((key) => Number(candidate[key]));
+  if (numbers.some((entry) => !Number.isFinite(entry))) return null;
+  const [x, y, width, height] = numbers as [number, number, number, number];
+  // Negative or absurd sizes are as broken as NaN; the hook's minimum handles the rest.
+  if (width <= 0 || height <= 0) return null;
+  return { x: Math.max(0, x), y: Math.max(0, y), width, height };
+}
+
 const PREFS_KEY = 'pdfx.prefs';
 const APPEARANCE_KEY = 'pdfx.appearance';
 const API_KEY = 'pdfx.gemini-key';
@@ -51,6 +92,7 @@ export const defaultPreferences: Preferences = {
   style: 'auto',
   customInstructions: '',
   panelWidth: 460,
+  overlayRect: null,
   panelCollapsed: false,
   panelMode: 'docked',
   overlayPinned: false,
@@ -83,6 +125,7 @@ export function loadPreferences(): Preferences {
     const merged: Preferences = { ...defaultPreferences, ...parsed };
     merged.panelWidth = Math.min(760, Math.max(340, Number(merged.panelWidth) || defaultPreferences.panelWidth));
     merged.panelMode = merged.panelMode === 'overlay' ? 'overlay' : 'docked';
+    merged.overlayRect = readOverlayRect(merged.overlayRect);
     merged.rememberKey = store.getItem(REMEMBER_KEY) === 'true';
     return merged;
   } catch {

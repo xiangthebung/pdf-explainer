@@ -132,14 +132,26 @@ toolbar, and it names what it does:
 | Layout | The slide gets | The notes |
 | --- | --- | --- |
 | Split | Its half of the window | Beside the slide, resizable |
-| Overlay | The whole window | Floating on top, resizable, translucent until you reach for them — pin to keep them awake |
+| Overlay | The whole window | A window on top: drag it anywhere, resize from any edge, translucent until you reach for them — pin to keep them awake |
 | Slide only | The whole window | Hidden, with a labelled way back |
 
-Both layouts share one width and one way to change it (`src/hooks/usePanelResize.ts`):
-drag the edge, or focus it and use the arrow keys. They did not always — the split
-view had a handle and the overlay took the same number as a read-only prop, so the
-notes resized in one mode and were fixed in the other for no reason a person could
-infer.
+**The docked panel** is a column with one degree of freedom. Drag the divider, or focus
+it and use the arrow keys (`src/hooks/usePanelResize.ts`).
+
+**The floating notes** are a window (`src/hooks/useFloatingPanel.ts`). Drag the header
+to move them, drag any of eight edges and corners to resize, or from the header use the
+arrow keys to move and Shift with the arrows to resize — one tab stop that does
+everything the handles do, which is why the handles themselves are hidden from assistive
+tech instead of adding nine. The rect is clamped to the slide stage, committed to
+preferences on release rather than per frame, and there is a reset button in the header
+once you have moved it.
+
+They do not share a size, and that is the second time this has been reconsidered. The
+overlay began as a pinned card that could only get wider, so sharing the docked width was
+right; once it could be moved it became a window with four degrees of freedom and a column
+width was no longer the same kind of quantity. `overlayRect` is its own preference, `null`
+until you place it by hand — which is what lets the default still be computed from the
+stage rather than guessed.
 
 Full screen is a separate line in the same menu, because it is a separate
 question: it hides the browser, and it composes with any of the three layouts.

@@ -40,8 +40,26 @@ function PageCountSync(): null {
 
 const MIN_PANEL = 360;
 const MAX_PANEL = 720;
-/** How much of the window the slide keeps, however wide the notes are dragged. */
+/** How much of the window the slide keeps, however wide the docked notes are dragged. */
 const MIN_STAGE = 360;
+
+/**
+ * How small the floating notes may get.
+ *
+ * Smaller than the docked column's 360, and deliberately: a docked panel that narrow makes
+ * the slide beside it unreadable, which is why that floor exists. A floating one is over the
+ * slide, so shrinking it out of the way is a thing somebody might actually want — and it
+ * still has to hold a tab bar and a line of prose.
+ */
+const OVERLAY_MIN = { width: 300, height: 200 };
+
+/** The gap the floating notes keep from the edges of the stage before being moved. */
+const OVERLAY_GAP = 12;
+/**
+ * Room left for the slide's own floating control bar, which sits `bottom-3` and is about
+ * 40px tall. The pinned card this replaced reserved the same space with `bottom-[74px]`.
+ */
+const OVERLAY_FOOT = 74;
 
 /**
  * The stub that a collapsed panel leaves behind. A hidden panel with no visible
@@ -105,6 +123,31 @@ export function Workspace(): React.JSX.Element {
     commit: (panelWidth) => update({ panelWidth }),
   });
   const panelWidth = resize.width;
+
+  /**
+   * Where the floating notes sit before they have been moved.
+   *
+   * Exactly where the pinned card used to be: the stage's top-right corner, full height less
+   * the control bar, as wide as the docked panel. So the default is unchanged and only
+   * becomes a free-floating rect once somebody drags it — at which point `overlayRect` stops
+   * being `null` and this is not consulted again.
+   *
+   * Measured from the stage rather than assumed, because it has to be right on a phone in
+   * landscape as well as on a 4K monitor.
+   */
+  const overlayFallback = useCallback(
+    (bounds: { width: number; height: number }) => {
+      const width = Math.min(prefs.panelWidth, Math.max(OVERLAY_MIN.width, bounds.width - OVERLAY_GAP * 2));
+      const height = Math.max(OVERLAY_MIN.height, bounds.height - OVERLAY_GAP - OVERLAY_FOOT);
+      return {
+        x: Math.max(OVERLAY_GAP, bounds.width - width - OVERLAY_GAP),
+        y: OVERLAY_GAP,
+        width,
+        height,
+      };
+    },
+    [prefs.panelWidth],
+  );
 
   const panelOpen = !prefs.panelCollapsed;
   /**
@@ -287,17 +330,23 @@ export function Workspace(): React.JSX.Element {
                 onLayoutChange={setLayout}
                 restoreLayout={restoreRef.current}
                 filmstrip={{ open: prefs.filmstrip, onToggle: toggleFilmstrip }}
-                /* Keep the hover arrow clear of the floating panel. */
-                rightInset={overlayNotes && panelOpen ? panelWidth + 22 : undefined}
+                /* Keep the hover arrow clear of the floating panel — but only while the
+                   panel is still where this code put it. Once it has been moved there is no
+                   "right" for the stage to reserve, and guessing would push the arrow away
+                   from a panel that is now on the left. If the notes cover the arrow after
+                   you have placed them yourself, the fix is to move them: that is what the
+                   header is for, and there are three other ways to change slide. */
+                rightInset={
+                  overlayNotes && panelOpen && !prefs.overlayRect ? panelWidth + 22 : undefined
+                }
               >
                 {overlayNotes && panelOpen && !focusMode ? (
                   <NotesOverlay
-                    width={panelWidth}
-                    minWidth={MIN_PANEL}
-                    maxWidth={MAX_PANEL}
-                    resizing={resize.dragging}
-                    onResizePointerDown={resize.onPointerDown}
-                    onResizeKeyDown={resize.onKeyDown}
+                    rect={prefs.overlayRect}
+                    fallback={overlayFallback}
+                    min={OVERLAY_MIN}
+                    onRectChange={(overlayRect) => update({ overlayRect })}
+                    onResetRect={() => update({ overlayRect: null })}
                     pinned={prefs.overlayPinned}
                     onTogglePin={() => update({ overlayPinned: !prefs.overlayPinned })}
                     onDock={() => update({ panelMode: 'docked' })}
