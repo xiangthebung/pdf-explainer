@@ -148,6 +148,37 @@ function isSafeReference(value: string): boolean {
   return value.trim().startsWith('#');
 }
 
+/**
+ * A document with no browsing context, for parsing markup we do not trust.
+ *
+ * The fallback path below used to parse into `document.createElement('div')`.
+ * Nothing was rendered from it and `scrub` ran before anything was inserted, so
+ * it reads safe — but an element made by `document.createElement` belongs to the
+ * live document, and a browser starts fetching `<img src>` in a document-owned
+ * subtree whether or not it is attached. `<img src=x onerror=…>` therefore fires
+ * during the parse, before the sanitiser has looked at a single attribute.
+ *
+ * Reaching that path needs nothing clever. It is taken whenever `DOMParser`
+ * reports a `parsererror`, and one unclosed tag is enough — so anything that can
+ * influence the model's output can choose to be parsed here.
+ *
+ * `createHTMLDocument` has no browsing context: no loads, no timers, no scripts.
+ * It is the same trick DOMPurify uses, and it is why the XML path above was
+ * already fine — `DOMParser` documents are inert for the same reason.
+ */
+let inertDocument: Document | null = null;
+
+function inertBody(): HTMLElement | null {
+  if (!inertDocument) {
+    try {
+      inertDocument = document.implementation.createHTMLDocument('');
+    } catch {
+      return null;
+    }
+  }
+  return inertDocument.body;
+}
+
 function sanitizeStyleValue(value: string): string {
   const lowered = value.toLowerCase();
   if (lowered.includes('url(') || lowered.includes('expression') || lowered.includes('javascript:')) return '';
@@ -245,12 +276,14 @@ export function sanitizeSvg(input: string): SanitizedSvg | null {
   }
 
   if (!root || root.tagName.toLowerCase() !== 'svg') {
-    // Malformed XML is common; the HTML parser is far more forgiving.
-    const host = document.createElement('div');
+    // Malformed XML is common and the HTML parser is far more forgiving, but it
+    // has to run somewhere that cannot load anything. See `inertBody`.
+    const host = inertBody();
+    if (!host) return null;
     host.innerHTML = source;
     const found = host.querySelector('svg');
     if (!found) return null;
-    root = found as SVGSVGElement;
+    root = found as unknown as SVGSVGElement;
   }
 
   if (!scrub(root)) return null;

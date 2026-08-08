@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { sanitizeSvg } from '../src/lib/sanitizeSvg';
 import { repairMermaid } from '../src/lib/mermaid';
 
@@ -67,6 +67,34 @@ describe('sanitizeSvg', () => {
     const result = sanitizeSvg('<svg viewBox="0 0 10 10"><rect width="4" height="4"><circle r="2"></svg>');
     expect(result).not.toBeNull();
     expect(result?.markup).toContain('<rect');
+  });
+
+  it('parses malformed markup somewhere that cannot load anything', () => {
+    /*
+     * The forgiving-parser fallback is entered whenever DOMParser reports a
+     * parsererror, and one unclosed tag is enough to get there — so anything
+     * shaping the model's output picks this path at will. It used to parse into
+     * `document.createElement('div')`, which belongs to the live document, and a
+     * browser fetches `<img src>` in a document-owned subtree whether or not it
+     * is attached: `onerror` fires during the parse, before `scrub` sees a
+     * single attribute. jsdom will not show that, so what is pinned here is the
+     * cause rather than the symptom — the live document is never the host.
+     */
+    const hostile =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"><img src="x" onerror="steal()"></svg>';
+
+    const parsed = new DOMParser().parseFromString(hostile, 'image/svg+xml');
+    expect(parsed.getElementsByTagName('parsererror').length).toBeGreaterThan(0);
+
+    const createElement = vi.spyOn(document, 'createElement');
+    try {
+      const result = sanitizeSvg(hostile);
+      expect(createElement).not.toHaveBeenCalled();
+      expect(result?.markup).toContain('<rect');
+      expect(result?.markup).not.toMatch(/<img|onerror|steal/i);
+    } finally {
+      createElement.mockRestore();
+    }
   });
 
   it('unwraps a markdown fence and ignores leading prose', () => {
