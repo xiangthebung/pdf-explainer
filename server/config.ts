@@ -27,8 +27,17 @@ export interface AppConfig {
   readonly maxUploadMb: number;
   readonly requestTimeoutMs: number;
   readonly chatTimeoutMs: number;
-  /** Simple abuse guard for deployed instances. */
-  readonly rateLimit: { readonly windowMs: number; readonly max: number };
+  /**
+   * Simple abuse guard for deployed instances.
+   *
+   * `models` has its own, much tighter allowance. `POST /api/models` takes any
+   * key and answers either "here is the catalogue" or 401 — which on a public
+   * deployment is a free, anonymous "is this Gemini key valid?" service, and a
+   * far better one than the generation endpoints because it is fast and cheap.
+   * A person adding their key needs one of these; someone working through a list
+   * of scraped keys needs thousands.
+   */
+  readonly rateLimit: { readonly windowMs: number; readonly max: number; readonly modelsMax: number };
   /**
    * How many reverse proxies stand in front of this server, or empty for none.
    *
@@ -73,6 +82,7 @@ export function buildConfig(env: EnvSource): AppConfig {
     rateLimit: {
       windowMs: parseNumber(env.RATE_LIMIT_WINDOW_MS, 60_000),
       max: parseNumber(env.RATE_LIMIT_MAX, 40),
+      modelsMax: parseNumber(env.RATE_LIMIT_MODELS_MAX, 8),
     },
     trustProxy: text(env.TRUST_PROXY),
   };

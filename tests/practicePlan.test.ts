@@ -14,8 +14,12 @@ describe('modelRequestsPerMinute', () => {
     expect(modelRequestsPerMinute(undefined)).toBe(5);
   });
 
-  it('resolves retired ids through the alias table', () => {
+  it('reads the family out of the id, whatever generation it is', () => {
+    // There is no catalogue and no alias table to consult any more — the name is
+    // all there is, and a pacing estimate has to come from it.
     expect(modelRequestsPerMinute('gemini-2.5-flash-lite')).toBe(15);
+    expect(modelRequestsPerMinute('gemini-9.9-flash-nano')).toBe(15);
+    expect(modelRequestsPerMinute('gemini-9.9-pro')).toBe(5);
   });
 });
 

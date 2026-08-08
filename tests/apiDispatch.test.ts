@@ -96,3 +96,38 @@ describe('dispatch', () => {
     expect((await dispatch('GET', '/config', noBody, ctx('quiet'))).status).toBe(200);
   });
 });
+
+/**
+ * Model discovery is the endpoint that needs a reason to exist on a public
+ * deployment, because it will answer "is this Gemini API key valid?" for anyone
+ * who asks. That is useful to a reader exactly once — when they paste their key
+ * — and useful to someone working through a list of scraped keys indefinitely.
+ */
+describe('POST /models', () => {
+  it('is routed, and asks for a key before it asks Google anything', async () => {
+    const result = await dispatch('POST', '/models', async () => ({}), ctx('models-a'));
+    expect(result.status).toBe(400);
+    expect((result.body as { code: string }).code).toBe('missing_key');
+  });
+
+  it('answers a 405 that names the method it wants', async () => {
+    const result = await dispatch('GET', '/models', noBody, ctx('models-b'));
+    expect(result.status).toBe(405);
+    expect(result.headers?.Allow).toBe('POST');
+  });
+
+  it('runs out of allowance long before the generation endpoints do', async () => {
+    configure({ RATE_LIMIT_MAX: '40', RATE_LIMIT_MODELS_MAX: '2', RATE_LIMIT_WINDOW_MS: '60000' });
+    const caller = ctx('oracle');
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      statuses.push((await dispatch('POST', '/models', async () => ({}), caller)).status);
+    }
+    // 400 is the missing key: the request arrived and was refused on its merits.
+    expect(statuses).toEqual([400, 400, 429, 429]);
+
+    // The same caller still has the run of the rest of the API. The two buckets
+    // are separate, or a reader who mistyped a key could not then use the app.
+    expect((await dispatch('GET', '/config', noBody, caller)).status).toBe(200);
+  });
+});

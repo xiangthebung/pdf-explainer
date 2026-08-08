@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Award, Blocks, Clock, ListChecks, PencilLine, RotateCcw, Sparkles, Target } from 'lucide-react';
-import { MODEL_OPTIONS } from '~shared/models';
 import { describePlan, planPractice } from '~shared/practicePlan';
+import { resolveModelSelection } from '~shared/models';
 import type { PracticeItem } from '~shared/types';
 import { cx, plural } from '../lib/utils';
+import { useServerConfig } from '../state/ServerConfigContext';
 import { usePreferences } from '../state/PreferencesContext';
 import { useStudy } from '../state/StudyContext';
 import { Button } from '../components/ui/Button';
@@ -33,14 +34,17 @@ const KINDS = {
 export function PracticePanel({ onOpenSettings }: { onOpenSettings: () => void }): React.JSX.Element {
   const { state, actions, needsKey } = useStudy();
   const { prefs } = usePreferences();
+  const config = useServerConfig();
   const [filter, setFilter] = useState<Filter>('all');
   const practice = state.practice;
   const running = practice.status === 'running';
-  /* What the button is about to do, in requests. Worth saying out loud: a
-     five-a-minute model covers the deck in one pass, a lite model in several. */
-  const plan = useMemo(() => planPractice(state.totalSlides, prefs.practiceModel), [state.totalSlides, prefs.practiceModel]);
-  const modelLabel =
-    MODEL_OPTIONS.find((option) => option.id === prefs.practiceModel)?.label ?? prefs.practiceModel;
+  /* The plan follows the discovered model's conservative pacing estimate. */
+  const practiceModel = resolveModelSelection(prefs.practiceModel, config.models, 'practice');
+  const plan = useMemo(() => planPractice(state.totalSlides, practiceModel), [state.totalSlides, practiceModel]);
+  /* The catalogue's display name, not the raw id — and nothing at all while the
+     catalogue is still in flight, rather than a sentence about a model we cannot
+     name yet. */
+  const modelLabel = config.models.find((option) => option.id === practiceModel)?.label ?? practiceModel;
 
   const stats = useMemo(() => {
     let answered = 0;
@@ -106,7 +110,10 @@ export function PracticePanel({ onOpenSettings }: { onOpenSettings: () => void }
               <>
                 A mixed set of questions, matching pairs and blanks drawn from all{' '}
                 {plural(state.totalSlides, 'slide')}.
-                <span className="mt-1.5 block text-ink-3">{describePlan(plan)} Using {modelLabel}.</span>
+                <span className="mt-1.5 block text-ink-3">
+                  {describePlan(plan)}
+                  {modelLabel ? ` Using ${modelLabel}.` : ''}
+                </span>
               </>
             }
             action={

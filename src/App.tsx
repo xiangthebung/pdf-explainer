@@ -5,6 +5,7 @@ import { SettingsSheet } from './sheets/SettingsSheet';
 import { ShortcutsSheet } from './sheets/ShortcutsSheet';
 import { UploadScreen } from './screens/UploadScreen';
 import { PreferencesProvider } from './state/PreferencesContext';
+import { ServerConfigProvider } from './state/ServerConfigContext';
 import { StudyProvider, useStudy } from './state/StudyContext';
 
 /**
@@ -16,10 +17,14 @@ const Workspace = lazy(() => import('./workspace/Workspace').then((module) => ({
 export default function App(): React.JSX.Element {
   return (
     <RootBoundary>
+      {/* Order matters: the catalogue is scoped to the key in preferences, and
+          the study session picks its models out of the catalogue. */}
       <PreferencesProvider>
-        <StudyProvider>
-          <Shell />
-        </StudyProvider>
+        <ServerConfigProvider>
+          <StudyProvider>
+            <Shell />
+          </StudyProvider>
+        </ServerConfigProvider>
       </PreferencesProvider>
     </RootBoundary>
   );

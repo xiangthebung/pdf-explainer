@@ -15,7 +15,7 @@ import {
 import { STUDY_STYLES } from '~shared/types';
 import { sessionStore } from '../lib/storage';
 import { cx, formatBytes, plural, relativeTime } from '../lib/utils';
-import { useServerConfig } from '../hooks/useServerConfig';
+import { useServerConfig } from '../state/ServerConfigContext';
 import { usePreferences } from '../state/PreferencesContext';
 import { useStudy } from '../state/StudyContext';
 import type { SessionSummary } from '../state/types';
@@ -48,6 +48,9 @@ export function UploadScreen({
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dragDepth = useRef(0);
+
+  /* A key is present, and asking Google what it can do did not work. */
+  const keyUnverified = !needsKey && Boolean(config.modelsError);
 
   const refreshSessions = useCallback(() => {
     void sessionStore.list().then((list) => setSessions(list.filter((entry) => entry.explainedSlides > 0).slice(0, 3)));
@@ -269,21 +272,41 @@ export function UploadScreen({
         ) : null}
 
         {/* Key + footer -------------------------------------------------- */}
+        {/*
+          Three states, not two. A key that is present but whose model list did
+          not load looks exactly like a working key from here, and the app used
+          to say "Ready to go" right up until the first request failed. The
+          catalogue is the earliest point at which a bad key is knowable, so it
+          is the point at which to say so.
+        */}
         <section className="mt-7 rounded-[16px] border border-line bg-surface p-4">
           <div className="flex items-start gap-3">
-            <ShieldCheck className={cx('mt-px h-4 w-4 shrink-0', needsKey ? 'text-warn' : 'text-good')} />
+            <ShieldCheck
+              className={cx('mt-px h-4 w-4 shrink-0', needsKey ? 'text-warn' : keyUnverified ? 'text-bad' : 'text-good')}
+            />
             <div className="min-w-0 flex-1">
               <p className="text-[13.5px] font-medium text-ink">
-                {needsKey ? 'Add your Gemini API key to generate notes' : 'Ready to go'}
+                {needsKey
+                  ? 'Add your Gemini API key to generate notes'
+                  : keyUnverified
+                    ? 'Your key did not work'
+                    : 'Ready to go'}
               </p>
               <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-2">
                 {needsKey
                   ? 'The key is kept on this device and used only to call Google on your behalf. Your slides are never stored on the server.'
-                  : 'Your key is stored locally. Slides are sent to Google only while notes are being generated.'}
+                  : keyUnverified
+                    ? config.modelsError
+                    : 'Your key is stored locally. Slides are sent to Google only while notes are being generated.'}
               </p>
             </div>
-            <Button size="sm" variant={needsKey ? 'primary' : 'secondary'} icon={<Settings className="h-3.5 w-3.5" />} onClick={onOpenSettings}>
-              {needsKey ? 'Add key' : 'Settings'}
+            <Button
+              size="sm"
+              variant={needsKey || keyUnverified ? 'primary' : 'secondary'}
+              icon={<Settings className="h-3.5 w-3.5" />}
+              onClick={onOpenSettings}
+            >
+              {needsKey ? 'Add key' : keyUnverified ? 'Fix key' : 'Settings'}
             </Button>
           </div>
         </section>

@@ -122,8 +122,13 @@ export interface ChatMessage {
 export interface ServerConfig {
   hasServerKey: boolean;
   requireUserKey: boolean;
+  /** Filled by the key-scoped model discovery request in the client. */
   models: ModelOption[];
   maxUploadMb: number;
+}
+
+export interface ModelListResponse {
+  models: ModelOption[];
 }
 
 export interface ModelOption {

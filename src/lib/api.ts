@@ -3,6 +3,7 @@ import type {
   ChatRequest,
   ExplainBatch,
   ExplainRequest,
+  ModelListResponse,
   PracticeRequest,
   PracticeSet,
   ServerConfig,
@@ -124,6 +125,9 @@ export interface ResponseMeta {
 export const api = {
   config(signal?: AbortSignal): Promise<ServerConfig> {
     return request<ServerConfig>('/api/config', { method: 'GET', signal });
+  },
+  models(apiKey?: string, signal?: AbortSignal, refresh = false): Promise<ModelListResponse> {
+    return post('/api/models', { apiKey: apiKey?.trim() || undefined, refresh }, signal);
   },
   explain(payload: ExplainRequest, signal?: AbortSignal): Promise<{ batch: ExplainBatch; meta: ResponseMeta }> {
     return post('/api/explain', payload, signal);

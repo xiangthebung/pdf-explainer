@@ -2,10 +2,10 @@
  * The API, with no web framework in it.
  *
  * Everything here takes a parsed request body and an abort signal and returns a status
- * and a value. That is not architecture for its own sake — it is what makes the same four
+ * and a value. That is not architecture for its own sake — it is what makes the same API
  * endpoints run on both things this app is deployed as. There is an Express server for
  * local development and the smoke suite (`server/routes.ts`), and a Cloudflare Worker for
- * production (`worker/index.ts`), and both are now twenty-line adapters over this file.
+ * production (`worker/index.ts`), and both are now thin adapters over this file.
  *
  * The bug that forced the split is worth recording, because it was invisible from inside
  * the repository. The API was an Express app bundled by esbuild as
@@ -19,17 +19,11 @@
  * artifact.
  */
 
-import {
-  MODEL_OPTIONS,
-  DEFAULT_CHAT_MODEL,
-  DEFAULT_EXPLAIN_MODEL,
-  DEFAULT_PRACTICE_MODEL,
-} from '../shared/models';
 import { normalizeExplainBatch, normalizePracticeSet, shuffleQuizOptions } from '../shared/normalize';
 import type { ServerConfig, StudyStyle } from '../shared/types';
 import { config } from './config';
 import { ApiError } from './errors';
-import { generateJson, generateText, pdfPart, resolveApiKey } from './gemini';
+import { generateJson, generateText, listAvailableModels, pdfPart, resolveApiKey } from './gemini';
 import { log, redact } from './log';
 import {
   chatSystemPrompt,
@@ -123,12 +117,13 @@ function readModel(value: unknown): string | undefined {
  */
 const hits = new Map<string, { count: number; resetAt: number }>();
 
-export function rateLimit(clientId: string): ApiResponse | null {
+export function rateLimit(clientId: string, bucket = 'api', max = config.rateLimit.max): ApiResponse | null {
   const now = Date.now();
-  const entry = hits.get(clientId);
+  const key = `${bucket}:${clientId}`;
+  const entry = hits.get(key);
   if (!entry || entry.resetAt < now) {
-    hits.set(clientId, { count: 1, resetAt: now + config.rateLimit.windowMs });
-  } else if (entry.count >= config.rateLimit.max) {
+    hits.set(key, { count: 1, resetAt: now + config.rateLimit.windowMs });
+  } else if (entry.count >= max) {
     return {
       status: 429,
       body: {
@@ -141,7 +136,7 @@ export function rateLimit(clientId: string): ApiResponse | null {
     entry.count += 1;
   }
   if (hits.size > 5000) {
-    for (const [key, value] of hits) if (value.resetAt < now) hits.delete(key);
+    for (const [entryKey, value] of hits) if (value.resetAt < now) hits.delete(entryKey);
   }
   return null;
 }
@@ -170,10 +165,26 @@ export function serverConfigResponse(): ApiResponse {
   const payload: ServerConfig = {
     hasServerKey: config.hasServerKey,
     requireUserKey: config.requireUserKey,
-    models: MODEL_OPTIONS,
+    // Models are discovered separately because user keys are not available to
+    // this keyless GET request.
+    models: [],
     maxUploadMb: config.maxUploadMb,
   };
   return { status: 200, body: payload };
+}
+
+/** Discover models with the same key that will be used for generation. */
+export async function listModels(raw: unknown, ctx: ApiContext): Promise<ApiResponse> {
+  const scope = 'models';
+  try {
+    const body = asRecord(raw);
+    const apiKey = resolveApiKey(body.apiKey ?? body.customApiKey);
+    const forceRefresh = body.refresh === true || body.forceRefresh === true;
+    const models = await listAvailableModels(apiKey, ctx.signal, config.requestTimeoutMs, forceRefresh);
+    return { status: 200, body: { models } };
+  } catch (error) {
+    return errorResponse(scope, error);
+  }
 }
 
 export async function explain(raw: unknown, ctx: ApiContext): Promise<ApiResponse> {
@@ -191,7 +202,7 @@ export async function explain(raw: unknown, ctx: ApiContext): Promise<ApiRespons
     const result = await generateJson({
       apiKey,
       requestedModel: readModel(body.model ?? body.selectedModel),
-      fallbackModel: DEFAULT_EXPLAIN_MODEL,
+      purpose: 'explain',
       systemInstruction: explainSystemPrompt({
         startSlide,
         totalSlides,
@@ -275,7 +286,7 @@ export async function practice(raw: unknown, ctx: ApiContext): Promise<ApiRespon
     const result = await generateJson({
       apiKey,
       requestedModel: readModel(body.model ?? body.selectedModel),
-      fallbackModel: DEFAULT_PRACTICE_MODEL,
+      purpose: 'practice',
       systemInstruction: practiceSystemPrompt({ totalSlides, fromSlide, toSlide, targetCount, existing }),
       contents: [{ role: 'user', parts: [pdfPart(pdf), { text: practiceUserPrompt(fromSlide, toSlide) }] }],
       responseSchema: practiceSchema,
@@ -342,7 +353,7 @@ export async function chat(raw: unknown, ctx: ApiContext): Promise<ApiResponse> 
     const result = await generateText({
       apiKey,
       requestedModel: readModel(body.model ?? body.selectedModel),
-      fallbackModel: DEFAULT_CHAT_MODEL,
+      purpose: 'chat',
       systemInstruction: chatSystemPrompt({
         slide,
         slideText: readText(body.slideText, 6000),
@@ -372,9 +383,9 @@ export async function chat(raw: unknown, ctx: ApiContext): Promise<ApiResponse> 
 const GET_ROUTES = { '/config': serverConfigResponse } as const;
 
 /** Everything that takes a body. */
-const POST_ROUTES = { '/explain': explain, '/practice': practice, '/chat': chat } as const;
+const POST_ROUTES = { '/models': listModels, '/explain': explain, '/practice': practice, '/chat': chat } as const;
 
-/** Every path this API answers on, for the `Allow` header of a genuine 405. */
+/** Every path this API answers on, for the Allow header of a genuine 405. */
 export const API_PATHS: readonly string[] = [
   ...Object.keys(GET_ROUTES),
   ...Object.keys(POST_ROUTES),
@@ -410,6 +421,14 @@ export async function dispatch(
 
   const limited = rateLimit(ctx.clientId);
   if (limited) return limited;
+
+  /* Model discovery answers "is this key valid?" for any key posted to it, which
+     is worth far more to someone testing a scraped list than to a reader adding
+     their own. It gets a second, tighter bucket of its own. */
+  if (route === '/models') {
+    const oracle = rateLimit(ctx.clientId, 'models', config.rateLimit.modelsMax);
+    if (oracle) return oracle;
+  }
 
   if (verb === 'GET' || verb === 'HEAD') {
     const handler = GET_ROUTES[route as keyof typeof GET_ROUTES];

@@ -10,11 +10,13 @@ import {
 } from 'react';
 import { normalizeExplainBatch } from '~shared/normalize';
 import { toPlainText } from '~shared/markdown';
+import { resolveModelSelection } from '~shared/models';
 import { planPractice, type PracticeWindow } from '~shared/practicePlan';
 import type { ChatMessage, PracticeItem } from '~shared/types';
 import { ApiFailure, api, isCancelled } from '../lib/api';
 import { newSessionId, sessionStore } from '../lib/storage';
 import { debounce, sleep } from '../lib/utils';
+import { useServerConfig } from './ServerConfigContext';
 import { usePreferences } from './PreferencesContext';
 import { deckProgress, emptyState, studyReducer, toSnapshot, type DeckProgress } from './reducer';
 import type { DeckSource, FailureInfo, StudyState } from './types';
@@ -74,6 +76,10 @@ function messageId(): string {
 export function StudyProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [state, dispatch] = useReducer(studyReducer, emptyState);
   const { prefs, apiKey } = usePreferences();
+  const config = useServerConfig();
+  const explainModel = resolveModelSelection(prefs.explainModel, config.models, 'explain');
+  const chatModel = resolveModelSelection(prefs.chatModel, config.models, 'chat');
+  const practiceModel = resolveModelSelection(prefs.practiceModel, config.models, 'practice');
 
   const explainRef = useRef<AbortController | null>(null);
   const practiceRef = useRef<AbortController | null>(null);
@@ -183,7 +189,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
             totalSlides: state.totalSlides,
             style: state.style,
             customInstructions: state.customInstructions,
-            model: prefs.explainModel,
+            model: explainModel,
             apiKey: apiKey || undefined,
           },
           controller.signal,
@@ -198,7 +204,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
         if (explainRef.current === controller) explainRef.current = null;
       }
     },
-    [state.source, state.explain.status, state.id, state.totalSlides, state.style, state.customInstructions, prefs.explainModel, apiKey],
+    [state.source, state.explain.status, state.id, state.totalSlides, state.style, state.customInstructions, explainModel, apiKey],
   );
 
   const cancelExplain = useCallback(() => {
@@ -230,7 +236,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
               .filter((message) => !message.failed)
               .map((message) => ({ role: message.role, text: message.text })),
             message: input.text,
-            model: prefs.chatModel,
+            model: chatModel,
             apiKey: apiKey || undefined,
           },
           controller.signal,
@@ -262,7 +268,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
         if (chatRef.current === controller) chatRef.current = null;
       }
     },
-    [state.source, state.id, state.notes, prefs.chatModel, apiKey],
+    [state.source, state.id, state.notes, chatModel, apiKey],
   );
 
   const sendChat = useCallback<StudyActions['sendChat']>(
@@ -316,7 +322,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
       practiceRef.current = controller;
 
       const total = Math.max(1, state.totalSlides);
-      const plan = planPractice(total, prefs.practiceModel);
+      const plan = planPractice(total, practiceModel);
       const windows = plan.windows;
       // Only the "add more" pass tells the model what it already asked. On the
       // first pass that list measurably shrinks the batch without reducing
@@ -357,7 +363,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
             fromSlide: window.from,
             toSlide: window.to,
             targetCount: window.target,
-            model: prefs.practiceModel,
+            model: practiceModel,
             apiKey: apiKey || undefined,
             existing: known.filter((item) => item.slide >= window.from && item.slide <= window.to),
           },
@@ -448,7 +454,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
         if (practiceRef.current === controller) practiceRef.current = null;
       }
     },
-    [state.source, state.practice.status, state.practice.items, state.id, state.totalSlides, prefs.practiceModel, apiKey],
+    [state.source, state.practice.status, state.practice.items, state.id, state.totalSlides, practiceModel, apiKey],
   );
 
   const cancelPractice = useCallback(() => {
