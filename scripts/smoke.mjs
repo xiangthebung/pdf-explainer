@@ -471,6 +471,33 @@ async function run() {
   });
   app.on('pageerror', (error) => consoleErrors.push(`keyed pageerror: ${error.message}`));
 
+  /*
+   * Model discovery, stubbed like every other endpoint in this phase.
+   *
+   * The key above is deliberately not a real one, so a live `POST /api/models`
+   * reaches Google and comes back 401 — correct behaviour, and a console error
+   * the "no console errors" check at the end would then report as a failure.
+   *
+   * This is new only because the endpoint was unreachable until now: the Express
+   * router matched nothing, so every `/api` call in this suite quietly received
+   * `index.html`. Worth knowing that this suite passed 88/88 against a server
+   * with no working API at all — it stubs the endpoints it cares about, and the
+   * one it did not stub was the one that told the truth.
+   */
+  await app.route('**/api/models', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        models: [
+          { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', note: 'Most capable', requestsPerMinute: 5 },
+          { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', note: 'Balanced', requestsPerMinute: 5 },
+          { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', note: 'Fastest', requestsPerMinute: 15 },
+        ],
+      }),
+    }),
+  );
+
   const note = (slide) => ({
     slide,
     summary: `Least squares, slide ${slide}`,

@@ -33,7 +33,22 @@ export function requestSignal(res: Response): AbortSignal {
 export function createApiRouter(): Router {
   const router = express.Router();
 
-  router.all('/{*path}', async (req, res) => {
+  /*
+   * `router.use`, not `router.all('/<pattern>')`, and that is the whole point.
+   *
+   * This was `router.all('/{*path}')`, which is Express 5 path syntax. The
+   * dependency is Express 4, whose path-to-regexp does not know braces — so the
+   * pattern matched nothing, every `/api` request fell through to the SPA
+   * catch-all, and `GET /api/config` answered with `index.html`. The client
+   * treats a failed config request as "use the defaults" and says nothing, so
+   * the app looked fine and had no API behind it.
+   *
+   * Which is the Cloudflare 405 again, in the other direction, introduced by the
+   * commit that fixed it: the Worker was tested and the Node adapter was not.
+   * `router.use` matches every method and every path with no pattern to compile,
+   * so there is no syntax here to be wrong about in either major version.
+   */
+  router.use(async (req, res) => {
     const ctx: ApiContext = { signal: requestSignal(res), clientId: req.ip ?? 'unknown' };
     /* Express has already parsed the body by the time this runs — `express.json()` is
        mounted upstream — so the thunk `dispatch` wants is just a value in a promise. The
