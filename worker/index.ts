@@ -31,6 +31,7 @@
 
 import { dispatch, type ApiContext } from '../server/api';
 import { configure } from '../server/config';
+import { securityHeaders } from '../server/headers';
 import { log } from '../server/log';
 
 export interface Env {
@@ -66,6 +67,9 @@ function envSource(env: Env): Record<string, string | undefined> {
   };
 }
 
+/* The Worker only ever runs in production, so the strict policy always applies. */
+const SECURITY = securityHeaders(true);
+
 function json(status: number, body: unknown, extra?: Readonly<Record<string, string>>): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -73,9 +77,26 @@ function json(status: number, body: unknown, extra?: Readonly<Record<string, str
       'Content-Type': 'application/json; charset=utf-8',
       // Every reply is user- and key-specific. None of it may be cached anywhere.
       'Cache-Control': 'no-store',
+      ...SECURITY,
       ...extra,
     },
   });
+}
+
+/**
+ * Copy an asset response so its headers can be added to.
+ *
+ * `env.ASSETS.fetch` hands back a response whose headers are immutable, and the
+ * document it serves is the one the CSP is actually for — headers on `/api`
+ * replies protect nothing, because nobody renders them. Reconstructing is the
+ * only way to add to it, and passing the original as the init argument keeps the
+ * status, the status text and everything Cloudflare set (ETag, Content-Type, the
+ * immutable caching on hashed assets).
+ */
+function withSecurityHeaders(response: Response): Response {
+  const copy = new Response(response.body, response);
+  for (const [name, value] of Object.entries(SECURITY)) copy.headers.set(name, value);
+  return copy;
 }
 
 export default {
@@ -86,7 +107,7 @@ export default {
     }
 
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith('/api/')) return withSecurityHeaders(await env.ASSETS.fetch(request));
 
     const path = url.pathname.slice('/api'.length);
     /* Cloudflare puts the caller's address here and does not let anyone else write it,
@@ -97,7 +118,7 @@ export default {
 
     try {
       const result = await dispatch(request.method, path, () => request.json(), ctx);
-      if (result.body === undefined) return new Response(null, { status: result.status });
+      if (result.body === undefined) return new Response(null, { status: result.status, headers: SECURITY });
       return json(result.status, result.body, result.headers);
     } catch (error) {
       /* `dispatch` catches everything an endpoint can throw, so reaching here means the

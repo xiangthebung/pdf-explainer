@@ -12,6 +12,7 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { config, configure, jsonBodyLimit } from './config';
+import { securityHeaders } from './headers';
 import { log } from './log';
 import { createApiRouter } from './routes';
 
@@ -28,6 +29,15 @@ async function start(): Promise<void> {
     app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : config.trustProxy);
   }
   app.use(express.json({ limit: jsonBodyLimit() }));
+
+  /* The same headers the Worker sets, minus the CSP in development — Vite's dev
+     server injects its HMR client inline and react-refresh needs `eval`. See the
+     note in server/headers.ts. */
+  const headers = securityHeaders(config.isProduction);
+  app.use((_req, res, next) => {
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    next();
+  });
 
   // Never cache API responses; they are user- and key-specific.
   app.use('/api', (_req, res, next) => {

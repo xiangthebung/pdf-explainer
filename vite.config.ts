@@ -1,10 +1,29 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
-import { defineConfig } from 'vitest/config';
+import { defineConfig, type Plugin } from 'vitest/config';
+import { headersFileBody } from './server/headers';
+
+/**
+ * Emit Cloudflare's `_headers` beside the built client.
+ *
+ * The Worker cannot set headers on static assets: `run_worker_first` only sends
+ * `/api/*` to it, so the asset handler answers documents without ever invoking
+ * it. Cloudflare reads this file instead. See `server/headers.ts` for why it is
+ * generated rather than checked in.
+ */
+function securityHeadersFile(): Plugin {
+  return {
+    name: 'pdfx-security-headers',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: '_headers', source: headersFileBody() });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), securityHeadersFile()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
