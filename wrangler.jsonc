@@ -1,11 +1,12 @@
 {
   "name": "pdf-explainer",
   "main": "worker/index.ts",
-  // Pinned to what the `workerd` binary in this repo's wrangler actually supports.
+  // Never later than what the `workerd` binary in this repo's wrangler supports.
   // A later date deploys fine — the edge runs ahead of the local binary — but breaks
   // `wrangler dev`, which refuses to start with "requires compatibility date X, but
   // the newest date supported by this server binary is Y". A date you cannot run
-  // locally is a date nobody tests against.
+  // locally is a date nobody tests against. Earlier is always safe, so bumping
+  // wrangler does not require touching this.
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
