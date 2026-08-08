@@ -61,31 +61,59 @@ function segmentsOf(id: string): string[] {
 }
 
 /**
- * Model families that answer `generateContent` but cannot do this job: they
- * return audio, images or vectors rather than the JSON these prompts ask for.
+ * Model families that answer `generateContent` and still cannot do this job.
  *
- * Note what is *not* here. Vision is not excluded — every explain and practice
- * request sends a PDF, so multimodal input is the whole point. Only multimodal
- * *output* is disqualifying.
+ * This list was first written from memory and was about half right. A real key
+ * returns 33 models, and thirteen of them belong here: Lyria writes *music*,
+ * Nano Banana draws pictures, Robotics-ER plans robot motion, Computer Use
+ * drives a UI, Antigravity is an agent preview, Deep Research is a long-running
+ * research run rather than a request, Omni answers in several modalities at
+ * once. All of them support `generateContent`. None of them can be handed a
+ * slide deck and a JSON schema.
+ *
+ * Gemma is here for a different reason: it is a perfectly good text model that
+ * supports neither `responseSchema` nor system instructions on this API, and
+ * all three jobs use one or the other. Offering it is offering a trap.
+ *
+ * Note what is deliberately *not* here. Vision is not excluded — every explain
+ * and practice request sends a PDF, so multimodal input is the whole point.
+ * Only multimodal output disqualifies a model.
  */
 const NON_TEXT_SEGMENTS = new Set([
+  // Answers in something other than text.
   'tts',
   'imagen',
   'veo',
+  'lyria',
+  'banana',
+  'omni',
+  'audio',
+  'image',
+  'speech',
+  'dialog',
+  // Not a request/response text model at all.
   'embedding',
   'embeddings',
   'embed',
   'aqa',
   'live',
   'realtime',
-  'audio',
-  'image',
-  'speech',
-  'dialog',
+  'robotics',
+  'antigravity',
+  // Text, but not with a schema or a system prompt.
+  'gemma',
 ]);
 
 /** Whole phrases that only make sense read across segment boundaries. */
-const NON_TEXT_PHRASES = [/image-generation/, /text-to-speech/, /native-audio/, /-tts$/];
+const NON_TEXT_PHRASES = [
+  /image-generation/,
+  /text-to-speech/,
+  /native-audio/,
+  /-tts$/,
+  /computer-use/,
+  /deep-research/,
+  /nano-banana/,
+];
 
 export function looksTextCapable(id: string): boolean {
   const value = id.toLowerCase();
@@ -131,20 +159,40 @@ function traitsOf(id: string): ModelTraits {
  * quota, so this is an estimate from the family name — deliberately low, because
  * being wrong low costs a few seconds of pacing and being wrong high costs the
  * reader a 429 in the middle of a run.
+ *
+ * Pro is its own case: it is the slowest and most tightly limited of the three,
+ * around a couple of requests a minute on a free key. Pacing a whole-deck review
+ * run as though it were Flash is how you get rate-limited half way through.
  */
 const FALLBACK_RPM = 5;
 const COMPACT_RPM = 15;
+const PRO_RPM = 2;
 
 export function modelRequestsPerMinute(id: string | undefined | null): number {
-  return traitsOf(resolveModelId(id, '')).compact ? COMPACT_RPM : FALLBACK_RPM;
+  const traits = traitsOf(resolveModelId(id, ''));
+  if (traits.compact) return COMPACT_RPM;
+  return traits.tier === 3 ? PRO_RPM : FALLBACK_RPM;
 }
 
 /** How good a substitute this model is for the job, highest first. */
 function rank(id: string, purpose: ModelPurpose): number[] {
   const { tier, compact, version, preview } = traitsOf(id);
   if (purpose === 'explain') {
-    // Slide notes are the heavy lifting: quality over latency.
-    return [tier, compact ? 0 : 1, version, preview ? 0 : 1];
+    /*
+     * Full-size Flash, not Pro — and this was learned the expensive way.
+     *
+     * "Slide notes are the heavy lifting, so pick the strongest model" is the
+     * obvious rule and it is wrong here. Ranked purely on capability, a real
+     * key defaults to `gemini-pro-latest`, and the first explain batch comes
+     * straight back 429: Pro allows about two requests a minute on a free key,
+     * and notes arrive in batches by design, so the flow that makes this app
+     * pleasant is precisely the one Pro's limit forbids. Every caller brings
+     * their own free key. A model that cannot finish is not the better model.
+     *
+     * Pro stays one place down the list and one click away in the picker.
+     */
+    const suitability = tier === 2 ? 3 : tier === 3 ? 2 : 1;
+    return [suitability, compact ? 0 : 1, version, preview ? 0 : 1];
   }
   // Chat wants to feel instant; practice fires several requests in a row and
   // lives or dies on the rate limit. Both want the quick end of the catalogue.

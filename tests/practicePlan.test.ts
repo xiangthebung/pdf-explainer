@@ -6,12 +6,20 @@ const LITE = 'gemini-flash-lite-latest';
 const FLASH = 'gemini-flash-latest';
 
 describe('modelRequestsPerMinute', () => {
-  it('knows the catalogue and guesses conservatively otherwise', () => {
+  it('guesses conservatively from the family name', () => {
     expect(modelRequestsPerMinute(LITE)).toBe(15);
     expect(modelRequestsPerMinute(FLASH)).toBe(5);
     expect(modelRequestsPerMinute('some-future-flash-lite')).toBe(15);
-    expect(modelRequestsPerMinute('some-future-pro')).toBe(5);
     expect(modelRequestsPerMinute(undefined)).toBe(5);
+  });
+
+  it('paces Pro far slower than Flash, because a free key does', () => {
+    // Around two requests a minute. Pacing a whole-deck review run as though
+    // Pro were Flash is how you get rate-limited half way through it.
+    expect(modelRequestsPerMinute('some-future-pro')).toBe(2);
+    expect(modelRequestsPerMinute('gemini-pro-latest')).toBe(2);
+    expect(planPractice(43, 'gemini-pro-latest').spacingMs).toBe(30_000);
+    expect(planPractice(43, 'gemini-pro-latest').singlePass).toBe(true);
   });
 
   it('reads the family out of the id, whatever generation it is', () => {
@@ -19,7 +27,7 @@ describe('modelRequestsPerMinute', () => {
     // all there is, and a pacing estimate has to come from it.
     expect(modelRequestsPerMinute('gemini-2.5-flash-lite')).toBe(15);
     expect(modelRequestsPerMinute('gemini-9.9-flash-nano')).toBe(15);
-    expect(modelRequestsPerMinute('gemini-9.9-pro')).toBe(5);
+    expect(modelRequestsPerMinute('gemini-9.9-flash')).toBe(5);
   });
 });
 

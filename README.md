@@ -75,6 +75,24 @@ making a speech model the default for slide notes.
 A retired id sitting in someone's `localStorage` needs no migration table. It is
 simply not in the catalogue, so it is not chosen.
 
+**Slide notes default to Flash, not Pro,** and that is not a typo. "The heavy
+lifting deserves the strongest model" is the obvious rule, and against a real
+key it picks `gemini-pro-latest` and the first batch comes straight back **429**:
+Pro allows around two requests a minute on a free key, and notes arrive in
+batches by design, so the flow that makes this app pleasant is exactly the one
+Pro's limit forbids. Every caller brings their own free key. A model that cannot
+finish is not the better model — so Pro sits one place down the ranking and one
+click away in the picker, and `modelRequestsPerMinute` paces it at two a minute
+if you do pick it.
+
+Thirty-three models came back from that key. Nineteen of them can do this job.
+The rest were Lyria (music), Nano Banana (images), Robotics-ER, Computer Use,
+Antigravity, Deep Research, Omni and Gemma — every one of which answers
+`generateContent`, and one of which, `nano-banana-pro-preview`, was being
+offered as a fast text model because `nano` reads as a compact variant. The real
+list is pinned in `tests/models.test.ts`, because that is the part no amount of
+care invents.
+
 **Review sets are planned around the model's rate limit.** One "cover all 43
 slides" request used to come back with two questions, or with JSON cut off
 mid-object. Now `shared/practicePlan.ts` picks the shape of the run from the
