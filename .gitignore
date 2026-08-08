@@ -32,3 +32,4 @@ generated_pdf_b64.txt
 # than about the work of changing it. Put that in a comment beside the code, or in
 # README.md if a user needs it.
 ai/
+.claude/

@@ -25,11 +25,12 @@ src/            browser app
   workspace/    slide stage, filmstrip, notes / ask / review panels, search
   practice/     quiz, matching, fill-in-the-blank, worked examples
   components/   design-system primitives and the Markdown/LaTeX/diagram renderers
-  state/        reducer + contexts (study session, preferences)
+  state/        reducer + contexts (study session, preferences, model catalogue)
   lib/          API client, pdf.js engine, storage, sanitisers, export
-shared/         types, model catalogue, normaliser, Markdown pipeline (client + server)
+shared/         types, model ranking, normaliser, Markdown pipeline (client + server)
 server/         the API: prompts, response schemas, JSON repair, Gemini client
   api.ts        every endpoint, with no web framework in it
+  headers.ts    the CSP and friends, shared by both targets
   routes.ts     Express adapter — local development and the smoke suite
   index.ts      the Node entry point
 worker/         Cloudflare Worker adapter — production
@@ -37,14 +38,15 @@ tests/          vitest suites plus generated fixture decks
 ```
 
 The API takes a parsed body and an abort signal and returns a status and a value,
-which is what lets the same four endpoints run on both things this deploys as. See
-**Deployment** below for why that matters more than it sounds.
+which is what lets the same endpoints run on both things this deploys as. See
+**Deployment** below for why that matters more than it sounds — twice.
 
-Four API routes, all cancellable and all validated on the way in and out:
+Five API routes, all cancellable and all validated on the way in and out:
 
 | Route | Does |
 | --- | --- |
-| `GET /api/config` | What the client needs to know: is a key required, which models, upload ceiling |
+| `GET /api/config` | What the client needs to know: is a key required, upload ceiling |
+| `POST /api/models` | Which models *this key* can call. Separate, and a POST, so the key never lands in a cacheable URL |
 | `POST /api/explain` | One batch of slide notes, sized by content density |
 | `POST /api/practice` | Review items for one slide range: quizzes, matching pairs, blanks |
 | `POST /api/chat` | One tutor answer for the current slide |
@@ -56,16 +58,34 @@ based on density, so reading starts in seconds instead of after a five-minute
 whole-deck run. The panel always offers the one action that makes sense next:
 explain from here, or continue from the first gap.
 
+**There is no model catalogue.** There was one — five hardcoded ids — and a list
+of model names goes stale the week a new one ships, while also offering people
+models their own key cannot call. `POST /api/models` asks Google what this key
+can actually use, and `shared/models.ts` ranks the answer.
+
+Which means everything there reasons about ids it has never seen, and two rules
+fall out of that. `generateContent` support is necessary and nowhere near
+sufficient — Gemini's text-to-speech and image-generation models support it too,
+and will cheerfully be asked for JSON study notes — so `looksTextCapable` filters
+them out by name, because the name is all the list gives us. And ids are matched
+by whole segment rather than by substring: scoring `pro` with `/pro/` once let
+`gemini-2.5-pro-preview-tts` tie with `gemini-2.5-pro` and win the tiebreak,
+making a speech model the default for slide notes.
+
+A retired id sitting in someone's `localStorage` needs no migration table. It is
+simply not in the catalogue, so it is not chosen.
+
 **Review sets are planned around the model's rate limit.** One "cover all 43
 slides" request used to come back with two questions, or with JSON cut off
 mid-object. Now `shared/practicePlan.ts` picks the shape of the run from the
-model: Flash Lite has room for several requests, so it walks the deck in windows
-of about ten slides and items appear while the rest is still being written; Flash
-gets five requests a minute, so it covers the whole deck in one bigger pass
-rather than being rate-limited half way through. Either way requests are paced to
-the model rather than to the network, and a 429 gets one patient retry before the
-run stops and says so. Measured on the same 42-slide deck: 45 items in five passes
-on Flash Lite, 29 items in one pass on Flash.
+model: a compact model has room for several requests, so it walks the deck in
+windows of about ten slides and items appear while the rest is still being
+written; a full-size one gets around five requests a minute, so it covers the
+whole deck in one bigger pass rather than being rate-limited half way through.
+Either way requests are paced to the model rather than to the network, and a 429
+gets one patient retry before the run stops and says so. Measured on the same
+42-slide deck: 45 items in five passes on a lite model, 29 items in one pass on a
+full one.
 
 The schema helps too: `quizzes`, `matchings` and `blanks` are separate arrays,
 because one flat "any item" shape invites a small model to fill fields that do
@@ -99,6 +119,25 @@ same allowlist sanitiser as model-authored SVG: no scripts, no event handlers, n
 `foreignObject`, no external references. Figures are made responsive so they scale
 with the panel instead of overflowing it.
 
+Where that markup gets *parsed* matters as much as what survives the parse. The
+XML path is a `DOMParser`, which is inert. The forgiving fallback for malformed
+XML — one unclosed tag is enough to reach it — used to parse into a
+`document.createElement('div')`, and an element made that way belongs to the live
+document: a browser starts fetching `<img src>` in a document-owned subtree
+whether or not it is attached, so `onerror` fires before the sanitiser has looked
+at a single attribute. It parses into `document.implementation.createHTMLDocument`
+now, which has no browsing context and cannot load anything.
+
+**A CSP, so that a gap in any of the above is worth nothing.** `server/headers.ts`
+is one policy for both deploy targets: `'self'` throughout, no inline or evaluated
+script, `frame-ancestors 'none'`. The exceptions are named where they are set. It
+is production-only, because Vite's dev server injects its HMR client inline.
+
+The pre-paint theme switch is `public/theme.js` rather than an inline block for
+exactly this reason. Hashing an inline script does not work here — Vite minifies
+inline scripts when it builds the HTML, so the hash would be right in development
+and wrong in production, which is the one place it matters.
+
 **The PDF lifecycle is explicit.** The pdf.js worker ships with the bundle (no
 CDN), documents are destroyed on unmount and on deck change, render tasks are
 cancelled before the next one starts, and thumbnails rasterise only near the
@@ -109,6 +148,12 @@ to `localStorage` if you tick *Remember on this device*. It is sent with each
 request, forwarded to Google, and never logged: `server/log.ts` redacts key-shaped
 strings from every log line and error message. Chat sends the current slide's text
 and notes — not the whole deck.
+
+That redaction is a list of patterns, and a list of patterns quietly stops being
+true when a provider changes format. It knew `AIza…` and not `AQ.Ab8…`, which is
+what AI Studio mints today — and Google echoes the rejected key back inside some
+of its own "API key not valid" messages, which is precisely the string that
+reaches `log.warn`. Both formats are pinned in `tests/log.test.ts` now.
 
 **Sessions survive a refresh.** Deck, notes, answers and conversations are stored
 in IndexedDB, and the upload screen offers to pick up where you left off. Notes
@@ -169,7 +214,7 @@ for next time.
 | `npm run deploy` | Build, then `wrangler deploy` to Cloudflare |
 | `npm run worker:dev` | The Worker locally, on `workerd`, with the real assets binding |
 | `npm run lint` | `tsc --noEmit` (strict) |
-| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, deploy shape |
+| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, model ranking, key redaction, security headers, the Express adapter over HTTP, deploy shape |
 | `npm run fixtures` | Regenerate the fixture decks in `tests/fixtures/` |
 
 The Node bundle goes to `build/`, not `dist/`, because `dist/` is uploaded to
@@ -206,6 +251,27 @@ behaviour: there is a Worker, it is the entry point, every API path reaches it b
 the asset handler, and the server bundle is not a public asset. A build that produces
 an artifact for a platform that does not run it is not the kind of mistake a unit test
 can see.
+
+**And then it happened again, backwards.** The commit that fixed the 405 split one
+Express app into a shared `dispatch` plus two adapters. It tested `dispatch`
+thoroughly and the Worker by its shape, and left the Express adapter as the only
+piece with nothing driving it — where it had been written as
+`router.all('/{*path}')`, which is Express 5 path syntax on an Express 4
+dependency. The pattern matched no request at all.
+
+So every `/api` call on Node fell past the router to the single-page-app
+catch-all and came back as `index.html` with a 200 on it. `GET /api/config`
+returned a web page, and the client treats its config request as silent
+best-effort, so it swallowed that and used its defaults: the app looked completely
+normal with no API behind it. Production was unaffected — Cloudflare never runs
+this file — so `npm run dev` and `npm start` were the only casualties, for four
+commits. The smoke suite passed 88/88 throughout, because it stubs the endpoints
+it cares about, and the one endpoint it did not stub was the one telling the truth.
+
+`tests/expressRoutes.test.ts` drives the real router over a real socket now. It is
+six requests and it would have caught this on the day. The router takes no path
+pattern at all any more, because there was nothing wrong with the code except the
+syntax of a string neither TypeScript nor Express would complain about.
 
 One thing to watch: the Gemini call is I/O, and waiting on `fetch` costs no CPU, so a
 ninety-second generation is nearly free. Parsing the request is not — a base64 PDF
