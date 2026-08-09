@@ -45,7 +45,31 @@ function describeHtml(body: string): string {
     : 'The server returned a web page instead of data. This usually means a proxy timed out or the upload was too large.';
 }
 
-async function readFailure(response: Response): Promise<ApiFailure> {
+/**
+ * A 404 or a 405 from a path we know exists means the API is not there.
+ *
+ * This app's own history is two of these. A deploy served the client as static
+ * assets with no Worker behind it, and every POST came back 405 from the asset
+ * handler. Later the Express router was written in a path syntax its own
+ * version could not parse, so every call fell through to the single-page-app
+ * fallback and came back 404. Both times the app said "Request failed (405)" or
+ * "Request failed (404)" and left the reader to guess.
+ *
+ * The third time, this should say what it means. The most likely cause by far
+ * is a development server that has not been restarted: `npm run dev` reloads
+ * the client on every save and cannot reload the server module it started with,
+ * so a new client will happily call an endpoint the running server has never
+ * heard of.
+ */
+function describeMissingEndpoint(path: string, status: number): string {
+  return (
+    `The server has no ${path} endpoint (${status}). ` +
+    'If you are running this locally, restart the dev server — it does not pick up server changes on its own. ' +
+    'If this is a deployed copy, the client is being served without its API behind it.'
+  );
+}
+
+async function readFailure(response: Response, path: string): Promise<ApiFailure> {
   const contentType = response.headers.get('content-type') ?? '';
   let text = '';
   try {
@@ -64,6 +88,15 @@ async function readFailure(response: Response): Promise<ApiFailure> {
     } catch {
       /* fall through to the generic paths below */
     }
+  }
+
+  /* Before the HTML branch: a 404 answered with an error page is still a
+     missing endpoint, and "a proxy timed out" would be the wrong story. */
+  if (response.status === 404 || response.status === 405) {
+    return new ApiFailure('server', describeMissingEndpoint(path, response.status), {
+      retryable: false,
+      status: response.status,
+    });
   }
 
   if (/<!DOCTYPE|<html|<body/i.test(text)) {
@@ -91,7 +124,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
 
   // 499 is what our server sends when it notices the client hung up.
   if (response.status === 499) throw new ApiFailure('cancelled', 'Request cancelled.');
-  if (!response.ok) throw await readFailure(response);
+  if (!response.ok) throw await readFailure(response, path);
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) {
