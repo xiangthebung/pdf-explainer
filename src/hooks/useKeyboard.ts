@@ -4,7 +4,7 @@ export interface ShortcutHandlers {
   [combo: string]: (event: KeyboardEvent) => void;
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
+export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return (
@@ -21,16 +21,50 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * separator resizes, a radio group moves the selection. When focus is inside
  * one, the global slide shortcuts stand down — otherwise one key press moves
  * both the tab and the slide, which is exactly as disorienting as it sounds.
+ *
+ * A scrollable pane needs the same standing-down for the opposite reason — the
+ * only keys that scroll one are the keys that change slide, so a reader halfway
+ * down a long note could not reach the rest of it. Panels mark their scroller
+ * `data-scroll-region`, but it is deliberately *not* in this selector: see
+ * `ownsNavigationKeys` for why a scroller claims these keys only when it is
+ * itself focused.
  */
 const ARROW_OWNERS =
   '[role="tablist"],[role="radiogroup"],[role="listbox"],[role="menu"],[role="menubar"],' +
   '[role="grid"],[role="tree"],[role="slider"],[role="spinbutton"],[role="separator"]';
 
-const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+/** Space is in here as a scrolling key, which is the other thing it is. */
+const NAVIGATION_KEYS = new Set([
+  ' ',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+]);
 
-function ownsNavigationKeys(target: EventTarget | null): boolean {
+export function ownsNavigationKeys(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return Boolean(target.closest(ARROW_OWNERS));
+  /*
+   * A composite widget claims these keys for everything inside it: the tab is
+   * within the tab list, the option within the listbox, and the key belongs to
+   * the group rather than to the element that happens to hold focus.
+   *
+   * A scroll region is the opposite, and the difference cost a working
+   * shortcut. It is a focus stop that exists *only* so the pane can be
+   * scrolled, so it claims the keys when it is itself focused and not when
+   * something inside it is. Matching it with `closest` handed every arrow press
+   * inside the panel to the scroller: answering a fill-in-the-blank moves focus
+   * to the card that replaces the input, the card sits inside the review pane,
+   * and ArrowRight then stopped changing slide. The smoke suite caught it —
+   * "no unsolved blank found on slide 2" — because it walks the deck with the
+   * arrow keys after answering, which is exactly what a reader does.
+   */
+  if (target.closest(ARROW_OWNERS)) return true;
+  return target.hasAttribute('data-scroll-region');
 }
 
 /**
