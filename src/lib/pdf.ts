@@ -47,7 +47,7 @@ export interface PdfSource {
 }
 
 export class PdfLoadError extends Error {
-  readonly reason: 'password' | 'corrupt' | 'empty' | 'unknown';
+  readonly reason: 'password' | 'corrupt' | 'empty' | 'not-pdf' | 'unknown';
   constructor(reason: PdfLoadError['reason'], message: string) {
     super(message);
     this.name = 'PdfLoadError';
@@ -83,12 +83,67 @@ export async function readPdfFile(file: File): Promise<PdfSource> {
 }
 
 /**
+ * How far into the file to look for the header.
+ *
+ * `%PDF-` is supposed to be the first five bytes, but files with a preamble in
+ * front of it are common enough that pdf.js scans the first kilobyte for it
+ * rather than checking offset zero. Matching that tolerance exactly is the point:
+ * a stricter check here would reject files pdf.js would go on to open, which is a
+ * worse failure than the one this is for.
+ */
+const HEADER_SEARCH_BYTES = 1024;
+
+function looksLikePdf(bytes: Uint8Array): boolean {
+  const limit = Math.min(bytes.length, HEADER_SEARCH_BYTES);
+  // '%PDF-' as bytes. Compared numerically to avoid decoding binary as text.
+  for (let i = 0; i + 4 < limit; i += 1) {
+    if (
+      bytes[i] === 0x25 &&
+      bytes[i + 1] === 0x50 &&
+      bytes[i + 2] === 0x44 &&
+      bytes[i + 3] === 0x46 &&
+      bytes[i + 4] === 0x2d
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Open a document. pdf.js takes ownership of (and detaches) the buffer it is
  * given, so every call gets its own copy.
  */
 export async function openDocument(base64: string, signal?: AbortSignal): Promise<PDFDocumentProxy> {
+  const bytes = base64ToBytes(base64);
+
+  /*
+   * Classify the file before pdf.js sees it, because pdf.js cannot tell these
+   * apart afterwards.
+   *
+   * Everything that is not a PDF — a PNG renamed to `.pdf`, a zero-byte file, a
+   * text file — raises the same `InvalidPDFException` as a genuinely damaged
+   * PDF, so all of them were reported as "It may be corrupted". For a mislabelled
+   * file that is not merely vague, it is wrong: the advice it implies is to
+   * re-export the deck, and the deck was never the problem. The upload screen's
+   * own type check does not catch this either, because it accepts a `.pdf`
+   * extension on its own.
+   *
+   * Five bytes of header separate the three cases, so the message can name the
+   * real one.
+   */
+  if (bytes.length === 0) {
+    throw new PdfLoadError('empty', 'That file is empty. Check the file and try again.');
+  }
+  if (!looksLikePdf(bytes)) {
+    throw new PdfLoadError(
+      'not-pdf',
+      'That file is not a PDF, whatever it is named. Export your slides as PDF and try again.',
+    );
+  }
+
   const task = pdfjs.getDocument({
-    data: base64ToBytes(base64),
+    data: bytes,
     // Keep the renderer self-contained: no CDN fetches for fonts or standard data.
     useSystemFonts: true,
     useWorkerFetch: false,
@@ -105,7 +160,15 @@ export async function openDocument(base64: string, signal?: AbortSignal): Promis
       await closeDocument(doc);
       throw new DOMException('Aborted', 'AbortError');
     }
-    if (doc.numPages < 1) throw new PdfLoadError('empty', 'That PDF has no pages.');
+    if (doc.numPages < 1) {
+      /* A zero-page PDF opens successfully, so this throw happens with a live
+         document in hand. Closing it first is not tidiness: per the note on
+         `closeDocument`, dropping one strands a pdf.js worker and the detached
+         source buffer. The abort branch above already does this; this branch
+         did not. */
+      await closeDocument(doc);
+      throw new PdfLoadError('empty', 'That PDF has no pages.');
+    }
     return doc;
   } catch (error) {
     if (error instanceof PdfLoadError) throw error;

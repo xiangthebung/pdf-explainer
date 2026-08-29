@@ -65,9 +65,54 @@ describe('opening decks', () => {
     await withDoc('no-text-layer.pdf', async (doc) => expect(doc.numPages).toBe(3));
   }, 60_000);
 
-  it('rejects a file that is not a PDF', async () => {
-    await expect(openDocument(bytesToBase64(new TextEncoder().encode('this is not a pdf')))).rejects.toThrow();
+  /**
+   * These four used to be one bucket.
+   *
+   * Everything that is not a readable PDF raises `InvalidPDFException`, so a PNG
+   * renamed to `.pdf`, a zero-byte file and a genuinely damaged deck all came back
+   * as "This file is not a readable PDF. It may be corrupted." That is vague for
+   * two of them and wrong for the third: it tells someone who picked the wrong
+   * file to go and re-export the right one.
+   *
+   * The old test asserted only `rejects.toThrow()`, which passes for every
+   * message including the wrong one — which is why the misclassification survived
+   * having a test pointed at it. These assert the reason.
+   */
+  it('names a file that is not a PDF as not a PDF, rather than as corrupt', async () => {
+    await expect(
+      openDocument(bytesToBase64(new TextEncoder().encode('this is not a pdf'))),
+    ).rejects.toMatchObject({ reason: 'not-pdf' });
   });
+
+  it('classifies a renamed image by its bytes, not its extension', async () => {
+    // A real PNG signature followed by nothing that matters.
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    await expect(openDocument(bytesToBase64(png))).rejects.toMatchObject({ reason: 'not-pdf' });
+  });
+
+  it('calls an empty file empty', async () => {
+    await expect(openDocument('')).rejects.toMatchObject({ reason: 'empty' });
+  });
+
+  it('still calls a damaged PDF corrupt', async () => {
+    /* Truncation keeps the `%PDF-` header, so this is the case the header check
+       must not swallow: it has to reach pdf.js and come back as corrupt. */
+    const whole = new Uint8Array(readFileSync(join(FIXTURES, 'normal-text.pdf')));
+    const half = whole.subarray(0, Math.floor(whole.length / 2));
+    await expect(openDocument(bytesToBase64(half))).rejects.toMatchObject({ reason: 'corrupt' });
+  }, 30_000);
+
+  it('accepts a PDF whose header is not at byte zero', async () => {
+    /* pdf.js scans the first kilobyte for the header, so the guard has to as
+       well. A stricter check would reject files that would otherwise open. */
+    const whole = new Uint8Array(readFileSync(join(FIXTURES, 'normal-text.pdf')));
+    const padded = new Uint8Array(whole.length + 8);
+    padded.set(new TextEncoder().encode('\n\n\n\n\n\n\n\n'), 0);
+    padded.set(whole, 8);
+    const doc = await openDocument(bytesToBase64(padded));
+    expect(doc.numPages).toBe(6);
+    await closeDocument(doc);
+  }, 30_000);
 
   it('honours an abort signal', async () => {
     const controller = new AbortController();
