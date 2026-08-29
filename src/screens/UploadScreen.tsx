@@ -130,7 +130,7 @@ export function UploadScreen({
   }, [accept]);
 
   return (
-    <div className="scroll-area h-full overflow-y-auto">
+    <main id="main" tabIndex={-1} className="scroll-area h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full w-full max-w-[640px] flex-col justify-center px-5 py-10 sm:py-16">
         <header className="hero-glow text-center">
           <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-[14px] bg-violet-soft shadow-soft">
@@ -176,7 +176,12 @@ export function UploadScreen({
               <p className="mt-3 text-[15px] font-medium text-ink">
                 {dragging ? 'Drop it anywhere' : 'Drag your slide PDF here'}
               </p>
-              <p className="mt-1 text-[13px] text-ink-3">Up to {config.maxUploadMb} MB · stays on your device</p>
+              {/* "stays on your device" read as a promise the app does not keep: the deck
+                  goes to Google to be explained. What is true is the narrower thing — it is
+                  never stored on this server — and the panel below says where it does go. */}
+              <p className="mt-1 text-[13px] text-ink-3">
+                Up to {config.maxUploadMb} MB · never stored on our server
+              </p>
               <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
                 <Button variant="primary" onClick={() => inputRef.current?.click()}>
                   Choose a PDF
@@ -189,10 +194,15 @@ export function UploadScreen({
                   Try the demo lecture
                 </Button>
               </div>
+              {/* Out of the tab order: the button above opens it, so as a stop of
+                  its own it was an unlabelled control that appeared to do nothing.
+                  The name is here for anything that reaches it another way. */}
               <input
                 ref={inputRef}
                 type="file"
                 accept="application/pdf,.pdf"
+                tabIndex={-1}
+                aria-label="Choose a PDF"
                 className="sr-only"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -297,7 +307,11 @@ export function UploadScreen({
                   ? 'The key is kept on this device and used only to call Google on your behalf. Your slides are never stored on the server.'
                   : keyUnverified
                     ? config.modelsError
-                    : 'Your key is stored locally. Slides are sent to Google only while notes are being generated.'}
+                    : /* "only while notes are being generated" was not true: a review set
+                         sends the deck as well, one slide window at a time. Chat does not —
+                         it sends the current slide's text and notes. The line has to cover
+                         both senders or it is a privacy claim that is quietly wrong. */
+                      'Your key is stored locally. Your deck is sent to Google when notes or review items are generated, and not otherwise.'}
               </p>
             </div>
             <Button
@@ -320,6 +334,6 @@ export function UploadScreen({
           </button>
         </footer>
       </div>
-    </div>
+    </main>
   );
 }
