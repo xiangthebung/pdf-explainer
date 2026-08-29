@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { PanelLeftOpen, PanelRightClose, Presentation } from 'lucide-react';
 import { cx } from '../lib/utils';
 import { IconButton } from '../components/ui/Button';
@@ -7,7 +7,7 @@ import { useShortcuts } from '../hooks/useKeyboard';
 import { usePanelResize } from '../hooks/usePanelResize';
 import { usePreferences } from '../state/PreferencesContext';
 import { useStudy } from '../state/StudyContext';
-import { Segmented } from '../components/ui/Surface';
+import { Segmented, tabIdFor } from '../components/ui/Surface';
 import { ExportSheet } from '../sheets/ExportSheet';
 import { SettingsSheet } from '../sheets/SettingsSheet';
 import { ShortcutsSheet } from '../sheets/ShortcutsSheet';
@@ -96,7 +96,9 @@ export function Workspace(): React.JSX.Element {
   const [tab, setTab] = useState<StudyTab>('notes');
   const [compactView, setCompactView] = useState<CompactView>('slide');
   const [overlay, setOverlay] = useState<Overlay>('none');
-  const frameRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLElement | null>(null);
+  /** Ties the phone view switcher to the thing it switches. */
+  const compactPanelId = useId();
   /** Layout to put back when "slide only" ends. */
   const beforeFocus = useRef<{ panelCollapsed: boolean; filmstrip: boolean } | null>(null);
   /** Which notes layout "show notes" should return to. */
@@ -268,13 +270,16 @@ export function Workspace(): React.JSX.Element {
           onCloseDeck={actions.reset}
         />
 
+        {/* The one landmark the skip link aims at. Only ever one of these two is
+            in the document, so both branches can claim the id. */}
         {compact ? (
-          <>
+          <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col">
             <div className="border-b border-line bg-surface px-3 py-2">
               <Segmented
                 className="w-full"
                 label="Workspace view"
                 size="sm"
+                panelId={compactPanelId}
                 options={[
                   {
                     value: 'slide' as const,
@@ -291,7 +296,12 @@ export function Workspace(): React.JSX.Element {
                 }}
               />
             </div>
-            <div className="min-h-0 flex-1">
+            <div
+              id={compactPanelId}
+              role="tabpanel"
+              aria-labelledby={tabIdFor(compactPanelId, compactView)}
+              className="min-h-0 flex-1"
+            >
               {compactView === 'slide' ? (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="min-h-0 flex-1">
@@ -309,9 +319,9 @@ export function Workspace(): React.JSX.Element {
                 <StudyPanel tab={tab} onTabChange={showTab} onOpenSettings={openSettings} showTabs={false} />
               )}
             </div>
-          </>
+          </main>
         ) : (
-          <div ref={frameRef} className="flex min-h-0 flex-1">
+          <main ref={frameRef} id="main" tabIndex={-1} className="flex min-h-0 flex-1">
             {focusMode ? null : prefs.filmstrip ? (
               <Filmstrip orientation="vertical" onCollapse={toggleFilmstrip} />
             ) : (
@@ -397,7 +407,7 @@ export function Workspace(): React.JSX.Element {
                 </div>
               </>
             ) : null}
-          </div>
+          </main>
         )}
 
         <SettingsSheet open={overlay === 'settings'} onClose={() => setOverlay('none')} />

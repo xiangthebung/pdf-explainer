@@ -41,9 +41,11 @@ export function LayoutMenu({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuId = useId();
 
-  /* Close on an outside click or Escape; move focus into the menu on open. */
+  /* Close on an outside click or Escape; move focus into the menu on open, and
+     hand it back to the button on close. */
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -73,6 +75,11 @@ export function LayoutMenu({
       window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('keydown', onKeyDown, true);
       cancelAnimationFrame(raf);
+      // The menu took focus on open, so it owes it back — picking an item or
+      // pressing Escape otherwise drops the keyboard on `document.body`. Only
+      // when focus is still in here: a click elsewhere has already put it
+      // somewhere the person chose, and pulling it back would undo that.
+      if (rootRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
     };
   }, [open]);
 
@@ -82,6 +89,7 @@ export function LayoutMenu({
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}

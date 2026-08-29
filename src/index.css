@@ -324,7 +324,12 @@ button,
   cursor: pointer;
 }
 
-button:disabled {
+/* `aria-disabled` reads the same way as `disabled` here on purpose: some
+   controls have to stay focusable after they are spent — a quiz option the
+   browser would otherwise blur out from under the reader — and a spent control
+   should still not offer a pointer. */
+button:disabled,
+button[aria-disabled='true'] {
   cursor: default;
 }
 
@@ -363,6 +368,27 @@ select {
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* The first tab stop on the page, and invisible until it is the focused one.
+   `clip-path` rather than `display: none`, because a link the browser has
+   removed from the layout is a link Tab cannot reach either. */
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  border-radius: 11px;
+  background-color: var(--c-surface);
+  box-shadow: var(--shadow-lg);
+  padding: 0.5rem 0.875rem;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text);
+  clip-path: inset(50%);
+}
+.skip-link:focus {
+  clip-path: none;
 }
 
 /* ---------------------------------------------------------------------------

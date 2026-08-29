@@ -1,8 +1,9 @@
+import { useId } from 'react';
 import { BookOpen, MessageSquare, Sparkles, Target } from 'lucide-react';
 import { deckProgress } from '../state/reducer';
 import { useStudy } from '../state/StudyContext';
 import { Button } from '../components/ui/Button';
-import { Segmented, type SegmentedOption } from '../components/ui/Surface';
+import { Segmented, tabIdFor, type SegmentedOption } from '../components/ui/Surface';
 import { ChatPanel } from './ChatPanel';
 import { NotesPanel } from './NotesPanel';
 import { PracticePanel } from './PracticePanel';
@@ -32,6 +33,7 @@ export function StudyPanel({
   showTabs?: boolean;
 }): React.JSX.Element {
   const { state, actions, needsKey } = useStudy();
+  const panelId = useId();
   const progress = deckProgress(state);
   const running = state.explain.status === 'running';
   const currentExplained = Boolean(state.notes[state.currentSlide]);
@@ -47,7 +49,7 @@ export function StudyPanel({
     <section className="flex h-full min-h-0 flex-col bg-bg" aria-label="Study panel">
       {showTabs ? (
         <header className="flex items-center gap-2 border-b border-line bg-surface px-3 py-2.5">
-          <Segmented options={STUDY_TABS} value={tab} onChange={onTabChange} label="Study view" />
+          <Segmented options={STUDY_TABS} value={tab} onChange={onTabChange} label="Study view" panelId={panelId} />
           <div className="ml-auto flex items-center gap-1.5">
             {tab === 'notes' && nextAction ? (
               <Button
@@ -64,7 +66,15 @@ export function StudyPanel({
         </header>
       ) : null}
 
-      <div className="min-h-0 flex-1">
+      {/* Only a tab panel when the tabs are here. On a phone the strip that
+          switches these lives in the workspace bar, and naming a tab that this
+          component did not render would be a dangling reference. */}
+      <div
+        id={showTabs ? panelId : undefined}
+        role={showTabs ? 'tabpanel' : undefined}
+        aria-labelledby={showTabs ? tabIdFor(panelId, tab) : undefined}
+        className="min-h-0 flex-1"
+      >
         {tab === 'notes' ? (
           <NotesPanel onOpenSettings={onOpenSettings} />
         ) : tab === 'chat' ? (

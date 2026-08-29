@@ -8,12 +8,16 @@ export function Spinner({ className, label }: { className?: string; label?: stri
   return (
     <span
       role={label ? 'status' : undefined}
-      aria-label={label}
       className={cx(
         'inline-block rounded-full border-2 border-line border-t-accent animate-spin h-4 w-4 align-[-2px]',
         className,
       )}
-    />
+    >
+      {/* A live region announces its contents, not its name, so the label has to
+          be text inside it. As an `aria-label` on an empty element this said
+          nothing at all. */}
+      {label ? <span className="sr-only">{label}</span> : null}
+    </span>
   );
 }
 

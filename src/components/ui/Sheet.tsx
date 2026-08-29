@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cx } from '../../lib/utils';
@@ -6,6 +6,32 @@ import { IconButton } from './Button';
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/**
+ * Keeps Tab inside `container`, wrapping at both ends.
+ *
+ * Exported because the search palette is a modal dialog too, and two copies of
+ * a focus trap is two things to get subtly different from each other.
+ */
+export function trapTab(event: { shiftKey: boolean; preventDefault: () => void }, container: HTMLElement | null): void {
+  if (!container) return;
+  const nodes = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (node) => node.offsetParent !== null || node === document.activeElement,
+  );
+  if (nodes.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 /**
  * Modal dialog that behaves like a centred sheet on desktop and a bottom sheet
@@ -35,39 +61,33 @@ export function Sheet({
   const titleId = useId();
   const descriptionId = useId();
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab' || !panelRef.current) return;
-      const nodes = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-        (node) => node.offsetParent !== null || node === document.activeElement,
-      );
-      if (nodes.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = nodes[0];
-      const last = nodes[nodes.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    },
-    [onClose],
-  );
+  /**
+   * The live handler, read through a ref so the effect below can depend on
+   * `open` alone.
+   *
+   * Depending on the handler directly meant depending on `onClose`, and every
+   * call site passes a fresh inline arrow — so any parent re-render tore the
+   * effect down. Its cleanup restores focus to the trigger, which is behind the
+   * modal, so opening Settings while notes were arriving pulled focus out of the
+   * dialog once per batch.
+   */
+  const keyDownRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  keyDownRef.current = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    trapTab(event, panelRef.current);
+  };
 
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent) => keyDownRef.current(event);
     document.addEventListener('keydown', handleKeyDown, true);
 
     // Focus the dialog itself unless a field explicitly asks for it. Focusing the
@@ -85,7 +105,7 @@ export function Sheet({
       document.body.style.overflow = overflow;
       restoreRef.current?.focus?.();
     };
-  }, [open, handleKeyDown]);
+  }, [open]);
 
   if (!open) return null;
 

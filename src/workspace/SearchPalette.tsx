@@ -5,6 +5,7 @@ import { searchDocument, type SearchHit } from '../lib/pdf';
 import { cx, plural } from '../lib/utils';
 import { useStudy } from '../state/StudyContext';
 import { Spinner } from '../components/ui/Feedback';
+import { trapTab } from '../components/ui/Sheet';
 import { usePdf } from './PdfContext';
 
 /**
@@ -23,6 +24,7 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   const [searching, setSearching] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   /** Where the reader was before browsing results, so Escape can undo it. */
@@ -32,8 +34,15 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
   useEffect(() => {
     if (!open) return;
     originRef.current = state.currentSlide;
+    // Whatever was focused before the palette took over. This is a modal
+    // dialog, so closing has to hand focus back; otherwise it lands on
+    // `document.body` and the next Tab starts the page again from the top.
+    const restore = document.activeElement as HTMLElement | null;
     const raf = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      restore?.focus?.();
+    };
     // Only on open: the slide changes as results are browsed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -119,9 +128,16 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Search this deck"
+        // `aria-modal` tells a screen reader the rest of the page is not there;
+        // without a trap, Tab walks into it anyway and the reader is left
+        // pressing keys against a document they cannot hear.
+        onKeyDown={(event) => {
+          if (event.key === 'Tab') trapTab(event, panelRef.current);
+        }}
         className="animate-pop absolute left-1/2 top-4 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-[16px] border border-line bg-elevated shadow-float backdrop-blur-2xl"
       >
         <div className="flex items-center gap-2.5 px-3.5 py-2.5">

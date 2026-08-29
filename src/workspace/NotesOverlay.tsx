@@ -66,6 +66,7 @@ export function NotesOverlay({
   children: ReactNode;
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLDivElement | null>(null);
   /** Awake on arrival, so switching modes never looks like nothing happened. */
   const [greeting, setGreeting] = useState(true);
   const [awake, setAwake] = useState(false);
@@ -75,6 +76,47 @@ export function NotesOverlay({
   useEffect(() => {
     const timer = setTimeout(() => setGreeting(false), 1600);
     return () => clearTimeout(timer);
+  }, []);
+
+  /**
+   * Focus arrives with the card and leaves with it.
+   *
+   * The card is summoned by a keyboard shortcut and by a menu item, and a
+   * floating window that opens behind your focus is a window you then have to go
+   * looking for — Tab, several times, into something you cannot see. The header
+   * is the right landing place because it is also the whole keyboard control:
+   * arrows move the card, Shift and arrows resize it.
+   */
+  useEffect(() => {
+    const restore = document.activeElement as HTMLElement | null;
+    // A frame, so the entrance does not fight the focus ring. Same reason the
+    // sheets wait.
+    const raf = requestAnimationFrame(() => headerRef.current?.focus({ preventScroll: true }));
+    return () => {
+      cancelAnimationFrame(raf);
+      restore?.focus?.();
+    };
+  }, []);
+
+  /**
+   * The stage's width, which the header needs in order to publish a range.
+   *
+   * A focusable separator has to say what its value can be as well as what it
+   * is, and the docked divider does exactly that — these two controls are the
+   * same kind of thing and should describe themselves the same way. The bounds
+   * `useFloatingPanel` clamps against stay inside the hook, so this reads the
+   * same box the hook reads: whatever the card is positioned in.
+   */
+  const [stageWidth, setStageWidth] = useState(0);
+
+  useEffect(() => {
+    const parent = ref.current?.offsetParent;
+    if (!(parent instanceof HTMLElement)) return;
+    const read = () => setStageWidth(parent.clientWidth);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(parent);
+    return () => observer.disconnect();
   }, []);
 
   /* Tracked in state rather than left to :hover, so a click inside the card keeps it awake
@@ -127,6 +169,10 @@ export function NotesOverlay({
   return (
     <div
       ref={ref}
+      // A bare div is `generic`, and a generic element is not allowed a name, so
+      // this label was being thrown away. `complementary` is what the card is:
+      // supporting material beside the slide rather than the slide itself.
+      role="complementary"
       aria-label="Floating notes"
       style={
         panel.rect
@@ -169,10 +215,17 @@ export function NotesOverlay({
           The pin, dock and close buttons live in here too. `useFloatingPanel` ignores a
           press that landed on a `<button>`, so all three still work. */}
       <div
+        ref={headerRef}
         {...panel.moveHandleProps}
         role="separator"
         aria-label="Move or resize the floating notes. Arrow keys move; hold Shift to resize."
         tabIndex={0}
+        // The width, reported the way the docked divider reports its own. A
+        // focusable separator without a value is a control that will not say
+        // what it did when you press a key.
+        aria-valuenow={Math.round(panel.rect?.width ?? min.width)}
+        aria-valuemin={min.width}
+        aria-valuemax={Math.max(min.width, stageWidth)}
         title="Drag to move · Shift+arrows to resize"
         className={cx(
           'flex h-9 shrink-0 touch-none items-center gap-1 rounded-t-[19px] border-b border-line px-2',

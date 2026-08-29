@@ -17,6 +17,12 @@ const Workspace = lazy(() => import('./workspace/Workspace').then((module) => ({
 export default function App(): React.JSX.Element {
   return (
     <RootBoundary>
+      {/* The first tab stop on the page. Both screens mark their content with
+          `id="main"`, so this always has somewhere to go — without it the way
+          past the top bar is Tab, once per control, every time. */}
+      <a href="#main" className="skip-link">
+        Skip to main content
+      </a>
       {/* Order matters: the catalogue is scoped to the key in preferences, and
           the study session picks its models out of the catalogue. */}
       <PreferencesProvider>

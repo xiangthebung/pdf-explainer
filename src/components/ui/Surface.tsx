@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { cx } from '../../lib/utils';
 
 /**
@@ -65,6 +65,17 @@ export interface SegmentedOption<T extends string> {
 }
 
 /**
+ * The id of the tab that selects a given panel value.
+ *
+ * A tab and the panel it controls each have to name the other, and the panel is
+ * rendered by whoever uses this control rather than by this file. Passing ids
+ * back out would mean a callback or a ref; agreeing on a rule costs one line.
+ */
+export function tabIdFor(panelId: string, value: string): string {
+  return `${panelId}-tab-${value}`;
+}
+
+/**
  * iOS-style segmented control. Arrow keys move between segments, matching the
  * platform behaviour people already expect from a tab list.
  */
@@ -75,6 +86,7 @@ export function Segmented<T extends string>({
   label,
   size = 'md',
   className,
+  panelId,
 }: {
   options: SegmentedOption<T>[];
   value: T;
@@ -82,15 +94,30 @@ export function Segmented<T extends string>({
   label: string;
   size?: 'sm' | 'md';
   className?: string;
+  /**
+   * The `id` of the element this control switches between. Given one, each tab
+   * points at it and can be pointed back at through `tabIdFor`; without one the
+   * tabs are a bare tab list, which is what the compact phone bar was.
+   */
+  panelId?: string;
 }): React.JSX.Element {
+  const listRef = useRef<HTMLDivElement | null>(null);
+
   const move = (delta: number) => {
     const index = options.findIndex((option) => option.value === value);
-    const next = options[(index + delta + options.length) % options.length];
-    if (next) onChange(next.value);
+    const position = (index + delta + options.length) % options.length;
+    const next = options[position];
+    if (!next) return;
+    onChange(next.value);
+    // The tabs share one tab stop, and it travels with the selection. Leaving
+    // focus on the segment that has just become `tabIndex={-1}` means the next
+    // Tab press leaves from a tab the browser no longer considers a stop.
+    listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[position]?.focus();
   };
 
   return (
     <div
+      ref={listRef}
       role="tablist"
       aria-label={label}
       className={cx('inline-flex rounded-[11px] bg-surface-2 p-[3px]', className)}
@@ -111,6 +138,8 @@ export function Segmented<T extends string>({
             key={option.value}
             type="button"
             role="tab"
+            id={panelId ? tabIdFor(panelId, option.value) : undefined}
+            aria-controls={panelId}
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(option.value)}
