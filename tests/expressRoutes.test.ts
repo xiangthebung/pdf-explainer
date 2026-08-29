@@ -35,9 +35,13 @@ describe('the Express adapter', () => {
   let base = '';
 
   beforeAll(async () => {
-    configure({});
+    /* A small ceiling so the oversized-body case below can send a small body.
+       Everything else here is indifferent to it. */
+    configure({ MAX_UPLOAD_MB: '0.01' });
     const app = express();
-    app.use(express.json());
+    /* No `express.json()` here, deliberately: the router mounts its own, and a
+       body parser the adapter does not own is a body parser whose failures the
+       adapter cannot answer. That was the bug. */
     app.use('/api', createApiRouter());
     /* The SPA catch-all, because its presence is what made the failure quiet:
        without it the bug was a 404, with it the bug was a 200 full of HTML. */
@@ -103,5 +107,56 @@ describe('the Express adapter', () => {
     const response = await fetch(`${base}/some/client/route`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('html');
+  });
+
+  /**
+   * The same gap as the router bug above, found a third time.
+   *
+   * `dispatch` answers a body it cannot parse with 400 "The request body was not
+   * valid JSON", and `tests/apiDispatch.test.ts` covers it. On Node that branch
+   * was unreachable: `express.json()` was mounted upstream of the router, so a
+   * malformed body threw inside the body parser and skipped `dispatch` entirely,
+   * landing on the app-level error handler as 500 "Unexpected server error" with
+   * `retryable: true`.
+   *
+   * Two deploy targets answering the same bytes differently, and the wrong answer
+   * being the one that tells the client to retry a request that can never
+   * succeed. Testing the shared core proves nothing about the adapters over it —
+   * which is the lesson this file already existed to record.
+   */
+  it('answers a malformed JSON body the way dispatch does, not as a 500', async () => {
+    const response = await fetch(`${base}/api/explain`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    const body = (await response.json()) as { code: string; error: string; retryable: boolean };
+    expect(body.code).toBe('bad_request');
+    expect(body.retryable).toBe(false);
+    expect(body.error).toContain('not valid JSON');
+  });
+
+  /**
+   * The other thing `express.json()` throws, and the reason the router has to own
+   * both. The 413 answer used to live in `server/index.ts`, which the Worker does
+   * not run and this suite did not exercise; moving body parsing into the router
+   * put the answer next to the parser that raises it.
+   *
+   * `MAX_UPLOAD_MB` is tiny here so the body can be. The envelope is
+   * `maxUploadMb + 6`, so 6.5 MB is over the limit and still cheap to build.
+   */
+  it('answers an oversized body as too_large rather than as a server fault', async () => {
+    const response = await fetch(`${base}/api/explain`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: `{"pdfBase64":"${'A'.repeat(6_500_000)}"}`,
+    });
+    expect(response.status).toBe(413);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    const body = (await response.json()) as { code: string; retryable: boolean };
+    expect(body.code).toBe('too_large');
+    expect(body.retryable).toBe(false);
   });
 });

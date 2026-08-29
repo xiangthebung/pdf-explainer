@@ -75,6 +75,39 @@ export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * The two ways a request body can fail before any endpoint sees it, answered in
+ * one place because both adapters have to give the same answer.
+ *
+ * They did not. The Worker reads the body inside `dispatch`, so a malformed one
+ * became the 400 below. Express parsed it in middleware mounted *upstream* of the
+ * router, so the same bytes threw past `dispatch` and landed on the app-level
+ * error handler as 500 "Unexpected server error", `retryable: true` — telling the
+ * client to retry a request that could never succeed, and telling the reader the
+ * fault was ours.
+ *
+ * That is the third time this repository has shipped two adapters that disagree
+ * about the same input, so the answer is a value both of them import rather than
+ * a string each of them writes. See `server/routes.ts` for the Express half.
+ */
+export function invalidJsonBody(): ApiResponse {
+  return {
+    status: 400,
+    body: { error: 'The request body was not valid JSON.', code: 'bad_request', retryable: false },
+  };
+}
+
+export function bodyTooLarge(): ApiResponse {
+  return {
+    status: 413,
+    body: {
+      error: `That upload is larger than the ${config.maxUploadMb} MB limit.`,
+      code: 'too_large',
+      retryable: false,
+    },
+  };
+}
+
 function readPdf(body: Record<string, unknown>): string {
   const raw = body.pdfBase64 ?? body.pdfData;
   if (typeof raw !== 'string' || raw.length < 64) {
@@ -442,10 +475,7 @@ export async function dispatch(
       try {
         body = await readBody();
       } catch {
-        return {
-          status: 400,
-          body: { error: 'The request body was not valid JSON.', code: 'bad_request', retryable: false },
-        };
+        return invalidJsonBody();
       }
       return handler(body, ctx);
     }
