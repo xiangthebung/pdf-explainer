@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
   PanelRightOpen,
   RefreshCw,
+  ScanLine,
   Search,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { fitPage, renderPageToCanvas, type RenderHandle } from '../lib/pdf';
+import { fitPage, getPageText, renderPageToCanvas, type RenderHandle } from '../lib/pdf';
 import { useShortcuts } from '../hooks/useKeyboard';
 import { clamp, cx } from '../lib/utils';
 import { useStudy } from '../state/StudyContext';
@@ -143,6 +144,49 @@ export function SlideStage({
 
   useEffect(() => () => renderRef.current?.cancel(), []);
 
+  /*
+   * The current slide's text, for two things that both needed it.
+   *
+   * A rasterised page is `role="img"` with a label that says "Slide 3 of 20", so
+   * a screen reader was told where it was and nothing about what was on it — the
+   * whole deck was unreadable. The extraction already existed for chat and
+   * search; putting it in a visually-hidden node next to the canvas gives the
+   * page a description rather than a position.
+   *
+   * The empty case is the other half. A scanned deck has no text layer, and the
+   * app knew that, told the model about it, and told the user only if they
+   * happened to run a search that found nothing. It is worth saying plainly:
+   * it explains why search misses the slide and why the tutor is vague about it.
+   *
+   * `null` is "not read yet" and distinct from `''`, "read, and there is none" —
+   * without that the notice flashes on every slide change before the text lands.
+   * Results are cached per page by `getPageText`, so revisiting a slide is free.
+   */
+  const [pageText, setPageText] = useState<string | null>(null);
+  const slideTextId = useId();
+
+  useEffect(() => {
+    if (!doc) {
+      setPageText(null);
+      return;
+    }
+    let cancelled = false;
+    setPageText(null);
+    void getPageText(doc, clamp(state.currentSlide, 1, doc.numPages))
+      .then((text) => {
+        if (!cancelled) setPageText(text);
+      })
+      .catch(() => {
+        if (!cancelled) setPageText('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc, state.currentSlide]);
+
+  const hasText = pageText !== null && pageText.trim().length > 0;
+  const textLayerMissing = pageText !== null && pageText.trim().length === 0;
+
   /* Zoom lives here, so its shortcuts do too. */
   const nudgeZoom = useCallback((delta: number) => {
     setZoom((value) => clamp(Number((value + delta).toFixed(2)), MIN_ZOOM, MAX_ZOOM));
@@ -228,11 +272,31 @@ export function SlideStage({
                 ref={canvasRef}
                 className="block"
                 aria-label={`Slide ${state.currentSlide} of ${total}`}
+                aria-describedby={slideTextId}
                 role="img"
               />
+              {/* What the canvas actually says, for anyone who cannot see it. */}
+              <div id={slideTextId} className="sr-only">
+                {hasText
+                  ? pageText
+                  : textLayerMissing
+                    ? 'This slide has no text layer. It is a scanned or exported image, so its words cannot be read out.'
+                    : 'Reading the text of this slide.'}
+              </div>
             </div>
           </div>
         )}
+
+        {/* Says why search will miss this slide and why the tutor has less to go on. */}
+        {status === 'ready' && textLayerMissing ? (
+          <div
+            className="pointer-events-none absolute top-4 left-4 flex items-center gap-1.5 rounded-full border border-line bg-elevated/90 px-2.5 py-1 text-[11px] text-ink-2 shadow-soft backdrop-blur"
+            title="Nothing on this slide can be searched, and the tutor sees only the picture."
+          >
+            <ScanLine className="h-3.5 w-3.5" aria-hidden="true" />
+            No text layer on this slide
+          </div>
+        ) : null}
 
         {/* Hover targets for mouse users; the controls below cover everyone else. */}
         {status === 'ready' && !atStart ? (
