@@ -27,7 +27,7 @@ const options = (...ids: string[]): ModelOption[] =>
  * Not invented. The hand-written list below it was written from memory and was
  * about half right — it did not imagine that Google would offer a *music*
  * model, a robotics planner and a UI-automation model through the same endpoint
- * as Gemini Flash. Thirteen of these thirty-three answer `generateContent` and
+ * as Gemini Flash. Fourteen of these thirty-three answer `generateContent` and
  * cannot do anything this app asks for.
  *
  * The catalogue moves, so this will age. It is here as a record of the shapes

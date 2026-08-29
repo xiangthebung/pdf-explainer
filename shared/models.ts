@@ -64,7 +64,11 @@ function segmentsOf(id: string): string[] {
  * Model families that answer `generateContent` and still cannot do this job.
  *
  * This list was first written from memory and was about half right. A real key
- * returns 33 models, and thirteen of them belong here: Lyria writes *music*,
+ * returns 33 models, and fourteen of them belong here — twelve to the families
+ * below and two to Gemma, for the separate reason further down. (This said
+ * "thirteen" for a while, which matched neither count; `tests/models.test.ts`
+ * asserts 19 kept out of 33, so the arithmetic is pinned even when the prose
+ * drifts.) Lyria writes *music*,
  * Nano Banana draws pictures, Robotics-ER plans robot motion, Computer Use
  * drives a UI, Antigravity is an agent preview, Deep Research is a long-running
  * research run rather than a request, Omni answers in several modalities at

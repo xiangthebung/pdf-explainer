@@ -41,7 +41,9 @@ The API takes a parsed body and an abort signal and returns a status and a value
 which is what lets the same endpoints run on both things this deploys as. See
 **Deployment** below for why that matters more than it sounds — twice.
 
-Five API routes, all cancellable and all validated on the way in and out:
+Five API routes. The four that call a model are cancellable and validated on
+the way in and out; `GET /api/config` is neither, because it takes no input and
+returns three settings:
 
 | Route | Does |
 | --- | --- |
@@ -81,7 +83,7 @@ key it picks `gemini-pro-latest` and the first batch comes straight back **429**
 Pro allows around two requests a minute on a free key, and notes arrive in
 batches by design, so the flow that makes this app pleasant is exactly the one
 Pro's limit forbids. Every caller brings their own free key. A model that cannot
-finish is not the better model — so Pro sits one place down the ranking and one
+finish is not the better model — so every Flash model outranks Pro, which sits one
 click away in the picker, and `modelRequestsPerMinute` paces it at two a minute
 if you do pick it.
 
@@ -118,7 +120,9 @@ arrival by text, and that is as far as the de-duplication goes — a question yo
 meet again in the review set is revision, not a bug.
 
 **Model output is treated as hostile.** `shared/normalize.ts` repairs what it can
-and drops what it cannot trust, reporting every repair as a warning the UI shows.
+and drops what it cannot trust, reporting repairs as warnings the UI shows —
+deduplicated, and capped at twelve so one badly-formed batch cannot bury the
+notes under its own complaints.
 It never invents subject matter: a dropped question beats a wrong one.
 `server/json.ts` recovers from unescaped LaTeX (`"\frac"` is *valid* JSON and
 means form-feed, which would silently corrupt the maths), trailing commas, and
@@ -161,6 +165,24 @@ CDN), documents are destroyed on unmount and on deck change, render tasks are
 cancelled before the next one starts, and thumbnails rasterise only near the
 viewport so a 300-slide deck opens as fast as a 10-slide one.
 
+**A file that will not open says which way it failed.** pdf.js raises the same
+`InvalidPDFException` for a damaged deck, an empty file and a PNG someone renamed
+to `.pdf`, and all three used to be reported as "It may be corrupted" — vague for
+two of them and wrong for the third, because it sends someone who picked the wrong
+file off to re-export the right one. `src/lib/pdf.ts` looks for the `%PDF-` header
+first and names the case: not a PDF, empty, password protected, no pages, or
+corrupt. The header is searched for in the first kilobyte rather than at offset
+zero, matching pdf.js's own tolerance, because a stricter check would reject files
+that would otherwise have opened.
+
+**A slide with no text layer says so.** A scanned deck renders normally and
+extracts nothing, which quietly makes search useless and gives the tutor only a
+picture to work from. The app knew this and told nobody. There is a marker on the
+slide now, and the extracted text sits in a visually-hidden node beside the canvas
+so that a screen reader gets the content of the slide rather than only its number.
+Notes and practice still work on a scanned deck — Gemini reads the page image —
+so this is a note about what is degraded, not a refusal.
+
 **Your key, your device.** It lives in `sessionStorage` by default and only moves
 to `localStorage` if you tick *Remember on this device*. It is sent with each
 request, forwarded to Google, and never logged: `server/log.ts` redacts key-shaped
@@ -179,13 +201,14 @@ export as one portable Markdown file with the maths, code and diagrams intact.
 
 ## Keyboard
 
-`←` `→` `J` `K` `Space` slides · `Home` `End` ends · `1` `2` `3` study tabs · `E`
-explain from here · `R` reset this slide's practice · `/` search · `L` layout ·
-`N` (or double-click) notes on or off · `F` thumbnails · `⇧F` full screen ·
-`+` `−` `0` zoom · `?` all shortcuts · `Esc` step back or close.
+`←` `→` `J` `K` `Space` `PgUp` `PgDn` slides · `Home` `End` ends · `1` `2` `3`
+study tabs · `E` explain from here · `R` reset this slide's practice · `/` search ·
+`L` layout · `N` (or double-click) notes on or off · `F` thumbnails · `⇧F` full
+screen · `+` (or `=`) `−` `0` zoom · `?` all shortcuts · `Esc` step back or close.
 
-Arrow keys belong to whatever has focus: inside the tab bar, the thumbnail strip
-or on the divider they move that control, not the slide as well.
+Arrow keys belong to whatever has focus: inside the tab bar, the thumbnail strip,
+on the divider, or in a scrolling panel, they move that thing and not the slide as
+well.
 
 ## Layout
 
@@ -228,16 +251,28 @@ for next time.
 | --- | --- |
 | `npm run dev` | Express + Vite in middleware mode on `:3000` |
 | `npm run build` | Client bundle into `dist/`, Node server bundled to `build/server.cjs` |
-| `npm start` | Serve the production build with Node (`NODE_ENV=production`) |
+| `npm start` | Serve the built client and API with Node, in production mode |
 | `npm run deploy` | Build, then `wrangler deploy` to Cloudflare |
 | `npm run worker:dev` | The Worker locally, on `workerd`, with the real assets binding |
 | `npm run lint` | `tsc --noEmit` (strict) |
-| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, model ranking, key redaction, security headers, the Express adapter over HTTP, deploy shape |
+| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, model ranking, key redaction, security headers, the Express adapter over HTTP, deploy shape, documentation |
+| `npm run test:watch` | The same suite, watching |
 | `npm run fixtures` | Regenerate the fixture decks in `tests/fixtures/` |
+| `npm run preview` | Vite's own static preview of `dist/`, with no API behind it |
+| `npm run clean` | Delete `dist/` and `build/` |
+| `npm run smoke` | Drive a real browser through the demo deck (see below) |
 
 The Node bundle goes to `build/`, not `dist/`, because `dist/` is uploaded to
 Cloudflare wholesale — a server bundle in there would be published to the public
 alongside the client, sourcemap and all.
+
+`npm start` passes `--production` rather than setting `NODE_ENV`, and that is not
+decoration. Nothing in the repository set `NODE_ENV`, so the command documented as
+serving the production build did not: `config.isProduction` was false, which put a
+Vite dev server in front of `dist/` and turned off the CSP. An inline
+`NODE_ENV=production` in the script would fix it on a Unix shell and be a syntax
+error in the `cmd.exe` npm uses on Windows, so the switch is read by the program
+instead. `NODE_ENV` still wins where it is already set.
 
 `node scripts/smoke.mjs --url http://localhost:3000` drives a real browser through
 the demo deck — rendering, practice, search, export, dark mode and the phone
@@ -287,7 +322,7 @@ commits. The smoke suite passed 88/88 throughout, because it stubs the endpoints
 it cares about, and the one endpoint it did not stub was the one telling the truth.
 
 `tests/expressRoutes.test.ts` drives the real router over a real socket now. It is
-six requests and it would have caught this on the day. The router takes no path
+eight cases and it would have caught this on the day. The router takes no path
 pattern at all any more, because there was nothing wrong with the code except the
 syntax of a string neither TypeScript nor Express would complain about.
 
