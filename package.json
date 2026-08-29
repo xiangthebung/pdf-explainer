@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "vite build && esbuild server/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=build/server.cjs",
-    "start": "node build/server.cjs",
+    "start": "node build/server.cjs --production",
     "deploy": "npm run build && wrangler deploy",
     "worker:dev": "wrangler dev",
     "preview": "vite preview",
-    "clean": "rm -rf dist build",
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('build',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

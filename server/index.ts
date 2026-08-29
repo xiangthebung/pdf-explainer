@@ -11,13 +11,37 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
-import { config, configure, jsonBodyLimit } from './config';
+import { config, configure } from './config';
 import { securityHeaders } from './headers';
 import { log } from './log';
 import { createApiRouter } from './routes';
 
+/**
+ * `--production`, because `NODE_ENV=production npm start` is not portable.
+ *
+ * `npm start` was `node build/server.cjs` and the README called it "serve the
+ * production build". It did not. Nothing in the repository sets `NODE_ENV`, so
+ * `config.isProduction` was false, and that flag decides two things a long way
+ * apart: whether `dist/` is served or a Vite dev server is booted in front of it,
+ * and whether `securityHeaders` emits the CSP. So the documented way to run this
+ * served the client through a development bundler with no CSP on it — measured,
+ * not deduced: the process logged "listening on :3457 — development" and answered
+ * with no `Content-Security-Policy` header.
+ *
+ * The obvious fix, an inline `NODE_ENV=production` in the script, works in `sh`
+ * and is a syntax error in the `cmd.exe` npm uses on Windows. A flag is read by
+ * the program rather than by the shell, so it means the same thing everywhere and
+ * costs no dependency. `NODE_ENV` still wins when it is set, so nothing that
+ * already exports it changes.
+ */
+function environment(): NodeJS.ProcessEnv {
+  if (process.env.NODE_ENV) return process.env;
+  if (process.argv.includes('--production')) return { ...process.env, NODE_ENV: 'production' };
+  return process.env;
+}
+
 async function start(): Promise<void> {
-  configure(process.env);
+  configure(environment());
   const app = express();
 
   app.disable('x-powered-by');
@@ -28,7 +52,10 @@ async function start(): Promise<void> {
     const hops = Number(config.trustProxy);
     app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : config.trustProxy);
   }
-  app.use(express.json({ limit: jsonBodyLimit() }));
+  /* No body parser here. `createApiRouter()` mounts its own, because `/api` is the
+     only thing that reads a body and because a parser mounted upstream of the
+     router throws past it — which is how a malformed body became a 500 on Node and
+     a 400 on Workers. See the note in server/routes.ts. */
 
   /* The same headers the Worker sets, minus the CSP in development — Vite's dev
      server injects its HMR client inline and react-refresh needs `eval`. See the
@@ -46,16 +73,9 @@ async function start(): Promise<void> {
   });
   app.use('/api', createApiRouter());
 
+  /* Last resort only. Everything an API request can raise is answered by the API
+     router, which owns its own parser; anything arriving here is genuinely ours. */
   app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const status = (error as { status?: number })?.status;
-    if (status === 413) {
-      res.status(413).json({
-        error: `That upload is larger than the ${config.maxUploadMb} MB limit.`,
-        code: 'too_large',
-        retryable: false,
-      });
-      return;
-    }
     if (res.headersSent) {
       next(error);
       return;
