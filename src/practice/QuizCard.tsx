@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Check, X } from 'lucide-react';
 import type { QuizQuestion } from '~shared/types';
 import { cx } from '../lib/utils';
@@ -20,6 +21,24 @@ export function QuizCard({
 }): React.JSX.Element {
   const answered = chosen !== undefined;
   const correct = answered && chosen === question.correctIndex;
+  const answerLetter = LETTERS[question.correctIndex] ?? question.correctIndex + 1;
+
+  /**
+   * The verdict, said once, in a line nobody sees.
+   *
+   * Not the block at the bottom of the card: that carries the explanation, and a
+   * paragraph of prose marked live is re-read from the top every time React
+   * touches it. And not derived straight from `answered`, because paging to a
+   * slide whose questions were answered earlier mounts several of these at once
+   * — each would create a live region with a verdict already in it and say so.
+   */
+  const [spoken, setSpoken] = useState('');
+  const wasAnswered = useRef(answered);
+  useEffect(() => {
+    const justAnswered = answered && !wasAnswered.current;
+    wasAnswered.current = answered;
+    if (justAnswered) setSpoken(correct ? 'Correct' : `Incorrect. The answer is ${answerLetter}.`);
+  }, [answered, correct, answerLetter]);
 
   return (
     <section className="tint-card tint-violet p-4 pl-5">
@@ -45,6 +64,10 @@ export function QuizCard({
         ) : null}
       </header>
 
+      <p role="status" className="sr-only">
+        {spoken}
+      </p>
+
       <div role="radiogroup" aria-label="Answer options" className="space-y-1.5">
         {question.options.map((option, index) => {
           const isChosen = chosen === index;
@@ -58,8 +81,15 @@ export function QuizCard({
               type="button"
               role="radio"
               aria-checked={isChosen}
-              disabled={answered}
-              onClick={() => onChoose(index)}
+              // `aria-disabled` rather than `disabled`: the browser blurs a
+              // disabled element, so answering with the keyboard dropped focus
+              // on `document.body` and the reader lost their place in the card.
+              // The guard below is what actually stops a second answer.
+              aria-disabled={answered}
+              onClick={() => {
+                if (answered) return;
+                onChoose(index);
+              }}
               className={cx(
                 'flex w-full items-start gap-2.5 rounded-[12px] border p-2.5 text-left text-[13.5px] transition-[background-color,border-color,opacity] duration-150',
                 reveal
@@ -99,7 +129,7 @@ export function QuizCard({
           )}
         >
           <p className={cx('text-[12px] font-semibold', correct ? 'text-good' : 'text-ink-2')}>
-            {correct ? 'Correct' : `Answer: ${LETTERS[question.correctIndex] ?? question.correctIndex + 1}`}
+            {correct ? 'Correct' : `Answer: ${answerLetter}`}
           </p>
           {question.explanation ? (
             <div className="mt-1 text-[13px] leading-relaxed text-ink-2">

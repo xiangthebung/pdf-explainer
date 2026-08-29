@@ -32,7 +32,6 @@ export function ClozeCard({
   const [revealed, setRevealed] = useState(false);
   /** Already finished before this card was mounted, i.e. on an earlier visit. */
   const [arrivedDone, setArrivedDone] = useState(completed);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Reset only when the exercise itself changes. Reacting to `completed` here
   // would wipe the verdict the moment a correct answer is recorded, and the
@@ -54,6 +53,32 @@ export function ClozeCard({
   const solved = revealed || verdict === 'correct';
   const showHint = !solved && attempts > 0;
 
+  /**
+   * The verdict, said once, in a line nobody sees, plus somewhere for focus to
+   * land when the card stops having controls.
+   *
+   * Solving swaps the input and both buttons for a line of text, so the element
+   * the reader was on is unmounted and focus falls to `document.body` — the card
+   * takes it instead, which is where they already were. Neither happens for a
+   * card that arrives solved: paging back to a slide answered earlier would
+   * otherwise announce a verdict nobody just earned and pull focus to it.
+   */
+  const [spoken, setSpoken] = useState('');
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const wasSolved = useRef(solved);
+
+  useEffect(() => {
+    if (!solved) {
+      wasSolved.current = false;
+      if (verdict) setSpoken(verdict === 'close' ? 'Close' : 'Not quite');
+      return;
+    }
+    if (wasSolved.current) return;
+    wasSolved.current = true;
+    setSpoken(verdict === 'correct' ? 'Correct' : 'Answer shown');
+    if (document.activeElement === document.body) sectionRef.current?.focus({ preventScroll: true });
+  }, [solved, verdict]);
+
   const submit = () => {
     if (!value.trim() || solved) return;
     const result = checkAnswer(value, item.answer);
@@ -66,14 +91,20 @@ export function ClozeCard({
     setAttempts((count) => count + 1);
   };
 
+  // No `blur()` here. The input is about to be unmounted anyway, and blurring it
+  // first only guarantees that focus is already on `document.body` by the time
+  // anything can catch it.
   const reveal = () => {
     setRevealed(true);
     onComplete();
-    inputRef.current?.blur();
   };
 
   return (
-    <section className="tint-card tint-amber p-4 pl-5">
+    <section ref={sectionRef} tabIndex={-1} className="tint-card tint-amber p-4 pl-5">
+      <p role="status" className="sr-only">
+        {spoken}
+      </p>
+
       <header className="mb-2.5 flex items-center gap-2">
         <Chip tone="amber">
           <PencilLine className="h-3 w-3" />
@@ -127,7 +158,6 @@ export function ClozeCard({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <div className="relative min-w-[180px] flex-1">
               <input
-                ref={inputRef}
                 value={value}
                 onChange={(event) => {
                   setValue(event.target.value);

@@ -69,7 +69,13 @@ export function PracticePanel({ onOpenSettings }: { onOpenSettings: () => void }
 
   if (practice.items.length === 0) {
     return (
-      <div className="scroll-area h-full overflow-y-auto px-4 py-6">
+      <div
+        role="region"
+        aria-label="Review set"
+        tabIndex={0}
+        data-scroll-region
+        className="scroll-area h-full overflow-y-auto px-4 py-6"
+      >
         {practice.error && practice.error.code !== 'cancelled' ? (
           <Notice
             tone="error"
@@ -222,7 +228,17 @@ export function PracticePanel({ onOpenSettings }: { onOpenSettings: () => void }
         </div>
       </header>
 
-      <div className="scroll-area min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+      {/* A tab stop of its own, because the arrows and Page keys that would
+          scroll a long review set are bound to the deck at the window.
+          `data-scroll-region` is what tells them to stand down while focus is in
+          here, and `role="region"` is what lets the name stick to a div. */}
+      <div
+        role="region"
+        aria-label="Review set"
+        tabIndex={0}
+        data-scroll-region
+        className="scroll-area min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
+      >
         <div className="mx-auto max-w-[680px] space-y-3 pb-16">
           {practice.warning ? (
             <Notice tone="warn" onDismiss={actions.dismissPracticeWarning}>

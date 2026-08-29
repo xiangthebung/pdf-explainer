@@ -58,9 +58,53 @@ export function NotesPanel({ onOpenSettings }: { onOpenSettings: () => void }): 
     if (node) positions.current.set(slide, node.scrollTop);
   };
 
+  /**
+   * One short line when notes land, for a reader who cannot see them appear.
+   *
+   * Not the note itself. Marking the article live means the whole thing is
+   * re-read from the top every time the next batch extends it, which is worse
+   * than silence — so this says what arrived and leaves the reading to the
+   * reader.
+   */
+  const [arrivals, setArrivals] = useState('');
+  const seenSlides = useRef<Set<number> | null>(null);
+
+  useEffect(() => {
+    const slides = Object.keys(state.notes)
+      .map(Number)
+      .sort((a, b) => a - b);
+    const previous = seenSlides.current;
+    seenSlides.current = new Set(slides);
+    // The first pass sets the baseline rather than announcing it: a restored
+    // session opens with notes already in it and has generated nothing.
+    if (!previous) return;
+    const arrived = slides.filter((page) => !previous.has(page));
+    if (arrived.length === 0) return;
+    const first = arrived[0];
+    const last = arrived[arrived.length - 1];
+    setArrivals(first === last ? `Notes ready for slide ${first}` : `Notes ready for slides ${first} to ${last}`);
+  }, [state.notes]);
+
+  /* The scroller is a tab stop of its own, because a long note is unreadable
+     otherwise: the arrows and Page keys that would scroll it are bound to the
+     deck at the window, and `data-scroll-region` is what tells them to stand
+     down while focus is in here. `role="region"` because a bare div is
+     `generic`, and a generic element cannot carry a name. */
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="scroll-area h-full overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      role="region"
+      aria-label={`Notes for slide ${slide}`}
+      tabIndex={0}
+      data-scroll-region
+      className="scroll-area h-full overflow-y-auto"
+    >
       <div className="mx-auto max-w-[720px] px-4 pb-24 pt-4 sm:px-6">
+        <p role="status" className="sr-only">
+          {arrivals}
+        </p>
+
         {state.warnings.length > 0 ? (
           <Notice tone="warn" className="mb-4" title="Some items were skipped" onDismiss={actions.dismissWarnings}>
             <ul className="list-disc space-y-0.5 pl-4">

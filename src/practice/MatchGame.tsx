@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Check } from 'lucide-react';
+import { ArrowUpRight, Check, X } from 'lucide-react';
 import { shuffle } from '~shared/normalize';
 import type { MatchingSet } from '~shared/types';
 import { cx } from '../lib/utils';
@@ -98,6 +98,17 @@ export function MatchGame({
     else setPickedDefinition(index === pickedDefinition ? null : index);
   };
 
+  /**
+   * What the cell is saying, independent of the colour it says it in. Green and
+   * red are the whole message otherwise, and the shake that carries "wrong" is
+   * over in half a second.
+   */
+  const cellMark = (index: number, isWrong: boolean): React.JSX.Element | null => {
+    if (matched.includes(index) || revealed) return <Check className="mt-px h-3.5 w-3.5 shrink-0 text-good" />;
+    if (isWrong) return <X className="mt-px h-3.5 w-3.5 shrink-0 text-bad" />;
+    return null;
+  };
+
   const cellClass = (index: number, picked: boolean, isWrong: boolean) =>
     cx(
       'w-full rounded-[12px] border p-2.5 text-left text-[13px] leading-snug transition-[background-color,border-color,opacity] duration-150',
@@ -152,9 +163,7 @@ export function MatchGame({
                   <span className="min-w-0 flex-1 font-medium">
                     <Markdown inline>{item.text}</Markdown>
                   </span>
-                  {matched.includes(item.index) || revealed ? (
-                    <Check className="mt-px h-3.5 w-3.5 shrink-0 text-good" />
-                  ) : null}
+                  {cellMark(item.index, wrong?.concept === item.index)}
                 </span>
               </button>
             </li>
@@ -169,8 +178,11 @@ export function MatchGame({
                 aria-pressed={pickedDefinition === item.index}
                 className={cellClass(item.index, pickedDefinition === item.index, wrong?.definition === item.index)}
               >
-                <span className="min-w-0 flex-1">
-                  <Markdown inline>{item.text}</Markdown>
+                <span className="flex items-start gap-2">
+                  <span className="min-w-0 flex-1">
+                    <Markdown inline>{item.text}</Markdown>
+                  </span>
+                  {cellMark(item.index, wrong?.definition === item.index)}
                 </span>
               </button>
             </li>

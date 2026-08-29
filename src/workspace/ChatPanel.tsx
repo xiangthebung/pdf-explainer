@@ -61,9 +61,45 @@ export function ChatPanel({ onOpenSettings }: { onOpenSettings: () => void }): R
 
   const lastUserMessage = [...messages].reverse().find((entry) => entry.role === 'user');
 
+  /**
+   * One short line when an answer lands, for a reader who cannot see it appear.
+   *
+   * Not the answer itself: a reply marked live is re-read from the top every
+   * time React touches it, and these are long. The count is in the text on
+   * purpose — a live region whose text does not change says nothing, so two
+   * replies in a row would otherwise be one announcement.
+   */
+  const [reply, setReply] = useState('');
+  const replies = messages.reduce((count, entry) => (entry.role === 'assistant' ? count + 1 : count), 0);
+  const seen = useRef({ slide, replies });
+
+  useEffect(() => {
+    const previous = seen.current;
+    seen.current = { slide, replies };
+    // Moving between slides swaps the whole conversation. That is a different
+    // reader's worth of history, not an answer that has just come back.
+    if (previous.slide !== slide || replies <= previous.replies) return;
+    setReply(`Reply ${replies} received`);
+  }, [slide, replies]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div ref={listRef} className="scroll-area min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+      <p role="status" className="sr-only">
+        {reply}
+      </p>
+
+      {/* A tab stop of its own, because the arrows and Page keys that would
+          scroll a long conversation are bound to the deck at the window.
+          `data-scroll-region` is what tells them to stand down while focus is in
+          here, and `role="region"` is what lets the name stick to a div. */}
+      <div
+        ref={listRef}
+        role="region"
+        aria-label={`Conversation about slide ${slide}`}
+        tabIndex={0}
+        data-scroll-region
+        className="scroll-area min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
+      >
         <div className="mx-auto max-w-[680px] space-y-3">
           {messages.length === 0 && !pending ? (
             <EmptyState
