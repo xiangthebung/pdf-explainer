@@ -255,12 +255,13 @@ for next time.
 | `npm run deploy` | Build, then `wrangler deploy` to Cloudflare |
 | `npm run worker:dev` | The Worker locally, on `workerd`, with the real assets binding |
 | `npm run lint` | `tsc --noEmit` (strict) |
-| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, model ranking, key redaction, security headers, the Express adapter over HTTP, deploy shape, documentation |
+| `npm test` | Vitest: normaliser, JSON recovery, LaTeX pipeline, sanitiser, reducer, export, PDF engine, cancellation, API routing, model ranking, key redaction, security headers, the Express adapter over HTTP, deploy shape, documentation, the link preview |
 | `npm run test:watch` | The same suite, watching |
 | `npm run fixtures` | Regenerate the fixture decks in `tests/fixtures/` |
 | `npm run preview` | Vite's own static preview of `dist/`, with no API behind it |
 | `npm run clean` | Delete `dist/` and `build/` |
 | `npm run smoke` | Drive a real browser through the demo deck (see below) |
+| `npm run og` | Redraw `public/og.png`, the link-preview card, from the running app |
 
 The Node bundle goes to `build/`, not `dist/`, because `dist/` is uploaded to
 Cloudflare wholesale — a server bundle in there would be published to the public
@@ -277,7 +278,34 @@ instead. `NODE_ENV` still wins where it is already set.
 `node scripts/smoke.mjs --url http://localhost:3000` drives a real browser through
 the demo deck — rendering, practice, search, export, dark mode and the phone
 layout — and writes screenshots to `.tmp/smoke/`. It needs a Chromium; set
-`CHROME_PATH` if it cannot find one.
+`CHROME_PATH` if it cannot find one. Finding that Chromium is `scripts/chrome.mjs`,
+shared with the card script below rather than copied into it: the value of that
+file is a list of where a browser turns out to live on three platforms, and two
+copies of such a list are one list and one that is out of date.
+
+## The link preview
+
+`index.html` carries Open Graph and Twitter card tags, so pasting a link to this
+app into a chat shows a title, a sentence and a picture rather than a bare URL.
+The sentence is the same one as the meta description: one claim about the app, in
+one place, so there is only one thing to keep true, and `tests/socialCard.test.ts`
+fails if the two ever drift apart, if the image named is not there, or if it is
+not the 1200×630 every consumer crops to.
+
+The picture is `public/og.png`, and it is a photograph rather than a drawing.
+`npm run og` opens the bundled demo deck in a real browser, waits until pdf.js has
+painted the slide and Mermaid has laid out its diagram, and lays that frame into
+the titled card. No API key is involved: the demo deck ships with the model
+response in the repository, so the notes in the picture are real notes through the
+real pipeline with nothing reaching Google. It needs the app running:
+
+```bash
+npm run build && npm run preview
+npm run og
+```
+
+Re-run it after a layout change. A card that no longer looks like the app is worse
+than no card, because it is the first thing anybody sees.
 
 ## Deployment
 

@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fixtures": "node scripts/build_fixtures.cjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "og": "node scripts/og-shot.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

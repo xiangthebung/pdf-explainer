@@ -70,7 +70,17 @@ describe('index.html stays inside the policy', () => {
   });
 
   it('references nothing cross-origin', () => {
-    const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
+    /*
+     * Subresources only, which is what the policy is about. `<link
+     * rel="canonical">` also carries an href and is deliberately absolute: it
+     * declares this page's own address for a crawler and loads nothing, so
+     * matching it here would be reading the attribute rather than the
+     * behaviour. Everything the browser actually fetches still has to come from
+     * this origin — including the Open Graph image, which is why its `content`
+     * URL points back here too.
+     */
+    const subresources = html.replace(/<link\b[^>]*\brel="canonical"[^>]*>/gi, '');
+    const urls = [...subresources.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
     expect(urls.length).toBeGreaterThan(0);
     for (const url of urls) expect(url).not.toMatch(/^(?:https?:)?\/\//);
   });
