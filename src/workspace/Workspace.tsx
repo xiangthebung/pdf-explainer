@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { PanelLeftOpen, PanelRightClose, Presentation } from 'lucide-react';
 import { cx } from '../lib/utils';
 import { IconButton } from '../components/ui/Button';
-import { useIsCompact } from '../hooks/useMediaQuery';
+import { useIsCompact, useMediaQuery } from '../hooks/useMediaQuery';
 import { useShortcuts } from '../hooks/useKeyboard';
 import { usePanelResize } from '../hooks/usePanelResize';
 import { usePreferences } from '../state/PreferencesContext';
@@ -11,10 +11,12 @@ import { Segmented, tabIdFor } from '../components/ui/Surface';
 import { ExportSheet } from '../sheets/ExportSheet';
 import { SettingsSheet } from '../sheets/SettingsSheet';
 import { ShortcutsSheet } from '../sheets/ShortcutsSheet';
+import type { AskPrompt } from './ChatPanel';
 import { Filmstrip } from './Filmstrip';
 import type { Layout } from './LayoutMenu';
 import { NotesOverlay } from './NotesOverlay';
 import { PdfProvider, usePdf } from './PdfContext';
+import { ResumeCard, type ResumeNotice } from './ResumeCard';
 import { SearchPalette } from './SearchPalette';
 import { SlideStage } from './SlideStage';
 import { STUDY_TABS, StudyPanel, type StudyTab } from './StudyPanel';
@@ -62,6 +64,14 @@ const OVERLAY_GAP = 12;
 const OVERLAY_FOOT = 74;
 
 /**
+ * A phone held upright. The slide sits above the notes rather than on a tab of
+ * its own: at 390px wide a 16:9 slide is about 200px tall, which leaves most
+ * of the screen for reading — and reading while looking at the slide is the
+ * whole point of the app. Landscape keeps the tabs; there is no height to share.
+ */
+const PORTRAIT_QUERY = '(orientation: portrait)';
+
+/**
  * The stub that a collapsed panel leaves behind. A hidden panel with no visible
  * way back is the classic version of this mistake, so the rail stays put and
  * labelled.
@@ -89,10 +99,19 @@ function EdgeRail({
  * column on a phone. The divider position is remembered, and every overlay is a
  * focus-trapped sheet so keyboard users never get lost.
  */
-export function Workspace(): React.JSX.Element {
-  const { state, actions } = useStudy();
+export function Workspace({
+  resume = null,
+  onDismissResume,
+}: {
+  /** Set when this session was reopened on load rather than chosen. */
+  resume?: ResumeNotice | null;
+  onDismissResume?: () => void;
+}): React.JSX.Element {
+  const { state, actions, needsKey } = useStudy();
   const { prefs, update } = usePreferences();
   const compact = useIsCompact();
+  const portrait = useMediaQuery(PORTRAIT_QUERY);
+  const stacked = compact && portrait;
   const [tab, setTab] = useState<StudyTab>('notes');
   const [compactView, setCompactView] = useState<CompactView>('slide');
   const [overlay, setOverlay] = useState<Overlay>('none');
@@ -218,6 +237,60 @@ export function Workspace(): React.JSX.Element {
     [compact],
   );
 
+  /*
+   * Select-to-ask lands here: the slide reports a highlighted phrase, the Ask
+   * tab is brought forward wherever it lives, and the phrase is handed to it.
+   * If the notes were hidden, they come back first — a question sent to a panel
+   * nobody can see is a question that appears to have gone nowhere.
+   */
+  const [ask, setAsk] = useState<AskPrompt | null>(null);
+  const askAbout = useCallback(
+    (selection: string) => {
+      setAsk({ selection, nonce: Date.now() });
+      showTab('chat');
+      if (focusMode) setLayout(restoreRef.current);
+    },
+    [showTab, focusMode, setLayout],
+  );
+  const consumeAsk = useCallback(() => setAsk(null), []);
+
+  /*
+   * The floating notes rest at a quarter opacity and used to stay there
+   * whatever happened inside them — a failed batch, a key prompt, a reply
+   * landing. This string changes with each of those, and the overlay wakes when
+   * it does.
+   */
+  const wakeKey = [
+    state.explain.status,
+    state.explain.error?.message ?? '',
+    state.chatError?.message ?? '',
+    state.chatPending ?? '',
+    state.practice.status,
+    state.practice.error?.message ?? '',
+    state.practice.warning ?? '',
+    needsKey ? 'key' : '',
+    Object.keys(state.notes).length,
+    state.warnings.length,
+  ].join('|');
+
+  /* The resume card leaves when the reader moves on. */
+  const openedOn = useRef(state.currentSlide);
+  useEffect(() => {
+    if (resume && state.currentSlide !== openedOn.current) onDismissResume?.();
+  }, [resume, state.currentSlide, onDismissResume]);
+
+  const resumeCard =
+    resume && onDismissResume ? (
+      <ResumeCard
+        name={resume.name}
+        slide={resume.slide}
+        total={resume.total}
+        updatedAt={resume.updatedAt}
+        onDismiss={onDismissResume}
+        onStartOver={actions.reset}
+      />
+    ) : null;
+
   useShortcuts(
     {
       ArrowRight: () => actions.step(1),
@@ -233,7 +306,9 @@ export function Workspace(): React.JSX.Element {
       '2': () => showTab('chat'),
       '3': () => showTab('practice'),
       e: () => {
-        if (state.explain.status !== 'running') void actions.explainFrom(state.currentSlide);
+        // Same gate as the button: without a key there is nothing to ask with,
+        // and firing a request that the server refuses is not a shortcut.
+        if (!needsKey && state.explain.status !== 'running') void actions.explainFrom(state.currentSlide);
       },
       r: () => actions.resetSlideProgress(state.currentSlide),
       f: toggleFilmstrip,
@@ -270,9 +345,34 @@ export function Workspace(): React.JSX.Element {
           onCloseDeck={actions.reset}
         />
 
-        {/* The one landmark the skip link aims at. Only ever one of these two is
-            in the document, so both branches can claim the id. */}
-        {compact ? (
+        {/* The one landmark the skip link aims at. Only ever one of these is in
+            the document, so every branch can claim the id. */}
+        {stacked ? (
+          <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col" data-layout="stacked">
+            <div className="relative shrink-0 border-b border-line" style={{ height: 'clamp(180px, 34dvh, 320px)' }}>
+              <SlideStage
+                onOpenSearch={() => setOverlay('search')}
+                onAskAbout={askAbout}
+                layout="split"
+                onLayoutChange={() => undefined}
+                showNotesLayouts={false}
+                filmstrip={{ open: prefs.filmstrip, onToggle: toggleFilmstrip }}
+              >
+                {resumeCard}
+              </SlideStage>
+            </div>
+            {prefs.filmstrip ? <Filmstrip orientation="horizontal" compact /> : null}
+            <div className="min-h-0 flex-1">
+              <StudyPanel
+                tab={tab}
+                onTabChange={setTab}
+                onOpenSettings={openSettings}
+                prompt={ask}
+                onPromptConsumed={consumeAsk}
+              />
+            </div>
+          </main>
+        ) : compact ? (
           <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col">
             <div className="border-b border-line bg-surface px-3 py-2">
               <Segmented
@@ -307,16 +407,26 @@ export function Workspace(): React.JSX.Element {
                   <div className="min-h-0 flex-1">
                     <SlideStage
                       onOpenSearch={() => setOverlay('search')}
+                      onAskAbout={askAbout}
                       layout="split"
                       onLayoutChange={() => undefined}
                       showNotesLayouts={false}
                       filmstrip={{ open: prefs.filmstrip, onToggle: toggleFilmstrip }}
-                    />
+                    >
+                      {resumeCard}
+                    </SlideStage>
                   </div>
                   {prefs.filmstrip ? <Filmstrip orientation="horizontal" /> : null}
                 </div>
               ) : (
-                <StudyPanel tab={tab} onTabChange={showTab} onOpenSettings={openSettings} showTabs={false} />
+                <StudyPanel
+                  tab={tab}
+                  onTabChange={showTab}
+                  onOpenSettings={openSettings}
+                  showTabs={false}
+                  prompt={ask}
+                  onPromptConsumed={consumeAsk}
+                />
               )}
             </div>
           </main>
@@ -336,6 +446,7 @@ export function Workspace(): React.JSX.Element {
             <div className="min-w-0 flex-1">
               <SlideStage
                 onOpenSearch={() => setOverlay('search')}
+                onAskAbout={askAbout}
                 layout={layout}
                 onLayoutChange={setLayout}
                 restoreLayout={restoreRef.current}
@@ -350,6 +461,7 @@ export function Workspace(): React.JSX.Element {
                   overlayNotes && panelOpen && !prefs.overlayRect ? panelWidth + 22 : undefined
                 }
               >
+                {resumeCard}
                 {overlayNotes && panelOpen && !focusMode ? (
                   <NotesOverlay
                     rect={prefs.overlayRect}
@@ -361,8 +473,15 @@ export function Workspace(): React.JSX.Element {
                     onTogglePin={() => update({ overlayPinned: !prefs.overlayPinned })}
                     onDock={() => update({ panelMode: 'docked' })}
                     onClose={() => update({ panelCollapsed: true })}
+                    wakeKey={wakeKey}
                   >
-                    <StudyPanel tab={tab} onTabChange={showTab} onOpenSettings={openSettings} />
+                    <StudyPanel
+                      tab={tab}
+                      onTabChange={showTab}
+                      onOpenSettings={openSettings}
+                      prompt={ask}
+                      onPromptConsumed={consumeAsk}
+                    />
                   </NotesOverlay>
                 ) : null}
               </SlideStage>
@@ -403,7 +522,13 @@ export function Workspace(): React.JSX.Element {
                 </div>
 
                 <div className="shrink-0" style={{ width: `${panelWidth}px` }}>
-                  <StudyPanel tab={tab} onTabChange={showTab} onOpenSettings={openSettings} />
+                  <StudyPanel
+                    tab={tab}
+                    onTabChange={showTab}
+                    onOpenSettings={openSettings}
+                    prompt={ask}
+                    onPromptConsumed={consumeAsk}
+                  />
                 </div>
               </>
             ) : null}

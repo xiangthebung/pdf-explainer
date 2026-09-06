@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import {
   ChevronLeft,
   ChevronRight,
+  MessageCircleQuestion,
   PanelRightOpen,
   RefreshCw,
   ScanLine,
@@ -9,7 +10,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { fitPage, getPageText, renderPageToCanvas, type RenderHandle } from '../lib/pdf';
+import { fitPage, getPageText, renderPageToCanvas, renderTextLayer, type RenderHandle } from '../lib/pdf';
 import { useShortcuts } from '../hooks/useKeyboard';
 import { clamp, cx } from '../lib/utils';
 import { useStudy } from '../state/StudyContext';
@@ -17,12 +18,21 @@ import { IconButton } from '../components/ui/Button';
 import { EmptyState, Skeleton, Spinner } from '../components/ui/Feedback';
 import { LayoutMenu, type Layout } from './LayoutMenu';
 import { usePdf } from './PdfContext';
+import { placeChip, readSelection, type ChipPlacement } from './selection';
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 
+/** The chip's footprint, for placing it before it has been measured. */
+const CHIP_SIZE = { width: 136, height: 32 };
+
+interface SelectionChip extends ChipPlacement {
+  text: string;
+}
+
 export function SlideStage({
   onOpenSearch,
+  onAskAbout,
   layout,
   onLayoutChange,
   restoreLayout = 'split',
@@ -32,6 +42,8 @@ export function SlideStage({
   children,
 }: {
   onOpenSearch: () => void;
+  /** Highlighted text on the slide, handed to the tutor. Without it there is no chip. */
+  onAskAbout?: (selection: string) => void;
   /** Where the notes live. `slide` means the slide has the window to itself. */
   layout: Layout;
   onLayoutChange: (next: Layout) => void;
@@ -61,7 +73,9 @@ export function SlideStage({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
   const renderRef = useRef<RenderHandle | null>(null);
+  const textRenderRef = useRef<RenderHandle | null>(null);
 
   /* True full screen, for when even focus mode is not enough room. */
   useEffect(() => {
@@ -100,7 +114,12 @@ export function SlideStage({
     };
   }, []);
 
-  /* Render the current page. Every path cancels the previous render task first. */
+  /*
+   * Render the current page: the picture into the canvas and, over it, the text
+   * layer that makes the slide selectable. Every path cancels both previous
+   * tasks first, so flicking through slides never leaves a late render landing
+   * on the wrong page.
+   */
   useEffect(() => {
     if (!doc || !box || box.width < 40) return;
     let cancelled = false;
@@ -120,12 +139,17 @@ export function SlideStage({
       const gutter = focus ? 12 : 24;
       const fit = fitPage(page, { width: box.width - gutter, height: box.height - gutter }, zoom);
       renderRef.current?.cancel();
+      textRenderRef.current?.cancel();
       const handle = renderPageToCanvas(page, canvas, { scale: fit.scale });
       renderRef.current = handle;
+      const layer = textLayerRef.current;
+      const text = layer ? renderTextLayer(page, layer, fit.scale) : null;
+      textRenderRef.current = text;
       try {
-        await handle.done;
+        await Promise.all([handle.done, text?.done]);
       } finally {
         if (renderRef.current === handle) renderRef.current = null;
+        if (textRenderRef.current === text) textRenderRef.current = null;
         page.cleanup();
         if (!cancelled) setRendering(false);
       }
@@ -139,10 +163,89 @@ export function SlideStage({
       cancelled = true;
       renderRef.current?.cancel();
       renderRef.current = null;
+      textRenderRef.current?.cancel();
+      textRenderRef.current = null;
     };
   }, [doc, box, zoom, focus, state.currentSlide]);
 
-  useEffect(() => () => renderRef.current?.cancel(), []);
+  useEffect(
+    () => () => {
+      renderRef.current?.cancel();
+      textRenderRef.current?.cancel();
+    },
+    [],
+  );
+
+  /*
+   * Select-to-ask.
+   *
+   * Highlight a phrase on the slide and a chip appears over it offering to ask
+   * the tutor. The selection is read from the document rather than tracked by
+   * hand, so a keyboard selection counts as much as a drag; the chip waits until
+   * the pointer is up, because a chip that chases a drag is a chip you cannot
+   * catch. It goes away when the selection does, and when the slide does.
+   */
+  const [chip, setChip] = useState<SelectionChip | null>(null);
+  const selectingRef = useRef(false);
+
+  useEffect(() => {
+    if (!onAskAbout) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const update = () => {
+      timer = null;
+      const stage = stageRef.current;
+      const selection = document.getSelection();
+      const text = readSelection(selection, textLayerRef.current);
+      if (!text || !stage || !selection || selectingRef.current) {
+        setChip(null);
+        return;
+      }
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setChip(null);
+        return;
+      }
+      setChip({ text, ...placeChip(rect, stage.getBoundingClientRect(), CHIP_SIZE) });
+    };
+    const schedule = (delay: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(update, delay);
+    };
+
+    const onSelectionChange = () => schedule(180);
+    const onPointerDown = (event: PointerEvent) => {
+      if (textLayerRef.current?.contains(event.target as Node)) selectingRef.current = true;
+    };
+    const onPointerUp = () => {
+      selectingRef.current = false;
+      schedule(0);
+    };
+    const onScroll = () => schedule(0);
+
+    document.addEventListener('selectionchange', onSelectionChange);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    const scroller = scrollRef.current;
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('selectionchange', onSelectionChange);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      scroller?.removeEventListener('scroll', onScroll);
+    };
+  }, [onAskAbout]);
+
+  useEffect(() => setChip(null), [state.currentSlide, zoom]);
+
+  const askAboutSelection = () => {
+    if (!chip || !onAskAbout) return;
+    const text = chip.text;
+    setChip(null);
+    document.getSelection()?.removeAllRanges();
+    onAskAbout(text);
+  };
 
   /*
    * The current slide's text, for two things that both needed it.
@@ -151,7 +254,9 @@ export function SlideStage({
    * a screen reader was told where it was and nothing about what was on it — the
    * whole deck was unreadable. The extraction already existed for chat and
    * search; putting it in a visually-hidden node next to the canvas gives the
-   * page a description rather than a position.
+   * page a description rather than a position. The selectable text layer is
+   * hidden from assistive tech for the same reason: it is the same words, in
+   * paint order, and hearing them twice is worse than once.
    *
    * The empty case is the other half. A scanned deck has no text layer, and the
    * app knew that, told the model about it, and told the user only if they
@@ -208,7 +313,7 @@ export function SlideStage({
     else setPageInput(String(state.currentSlide));
   }, [pageInput, actions, state.currentSlide]);
 
-  /* Swipe between slides on touch devices. */
+  /* Swipe between slides on touch devices. A drag that selected text was a selection, not a swipe. */
   const touchRef = useRef<{ x: number; y: number } | null>(null);
   const onTouchStart = (event: React.TouchEvent) => {
     const touch = event.touches[0];
@@ -219,6 +324,7 @@ export function SlideStage({
     touchRef.current = null;
     const touch = event.changedTouches[0];
     if (!start || !touch || zoom > 1.05) return;
+    if (document.getSelection()?.isCollapsed === false) return;
     const dx = touch.clientX - start.x;
     const dy = touch.clientY - start.y;
     if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
@@ -274,6 +380,18 @@ export function SlideStage({
                 aria-label={`Slide ${state.currentSlide} of ${total}`}
                 aria-describedby={slideTextId}
                 role="img"
+              />
+              {/* The selectable words, laid over the picture of them. Double-clicking
+                  a word selects it, and must not also flip the layout — which is what
+                  a double-click anywhere else on the slide still means, including the
+                  empty parts of this layer. */}
+              <div
+                ref={textLayerRef}
+                className="textLayer"
+                aria-hidden="true"
+                onDoubleClick={(event) => {
+                  if (event.target !== event.currentTarget) event.stopPropagation();
+                }}
               />
               {/* What the canvas actually says, for anyone who cannot see it. */}
               <div id={slideTextId} className="sr-only">
@@ -331,10 +449,32 @@ export function SlideStage({
         ) : null}
       </div>
 
+      {/* The select-to-ask chip. Pressing it must not clear the selection it is
+          about, which a mousedown on a button would otherwise do. */}
+      {chip && onAskAbout ? (
+        <div
+          className="pointer-events-none absolute z-30"
+          style={{ left: `${chip.x}px`, top: `${chip.y}px`, transform: 'translateX(-50%)' }}
+        >
+          <button
+            type="button"
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={askAboutSelection}
+            title="Ask the tutor about the highlighted text"
+            className="animate-pop pointer-events-auto inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full bg-ink px-3 text-[12.5px] font-medium text-bg shadow-float transition-transform hover:-translate-y-px"
+          >
+            <MessageCircleQuestion className="h-3.5 w-3.5 text-cyan" />
+            Ask about this
+          </button>
+        </div>
+      ) : null}
+
       {children}
 
-      {/* Floating control bar */}
-      <div className="pointer-events-none absolute bottom-3 left-0 right-0 flex justify-center px-3">
+      {/* Floating control bar. Above the slide and its text layer, which is what the
+          z-index is for: in "slide only" the page reaches under the bar. */}
+      <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
         <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-line bg-elevated px-1.5 py-1 shadow-card backdrop-blur-xl">
           <IconButton label="Previous slide" size="sm" onClick={() => actions.step(-1)} disabled={atStart}>
             <ChevronLeft className="h-4 w-4" />

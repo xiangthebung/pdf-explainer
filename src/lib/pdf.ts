@@ -266,6 +266,51 @@ export function renderPageToCanvas(
   };
 }
 
+/**
+ * Lay the page's text over the canvas, so it can be selected.
+ *
+ * pdf.js positions one transparent span per text run at the exact place the
+ * glyphs were painted, which is what turns a picture of a slide into something
+ * you can drag a cursor across. The container must sit over the canvas at the
+ * same CSS size; `--total-scale-factor` is how pdf.js is told what that size is
+ * (see `.textLayer` in index.css for the rest of the contract).
+ *
+ * Cancellable like the canvas render, and for the same reason: flicking
+ * through slides must not leave a late text layer landing on the wrong page.
+ */
+export function renderTextLayer(page: PDFPageProxy, container: HTMLElement, scale: number): RenderHandle {
+  const viewport = page.getViewport({ scale });
+  container.replaceChildren();
+  container.style.setProperty('--total-scale-factor', String(scale));
+
+  let layer: InstanceType<typeof pdfjs.TextLayer> | null = null;
+  let cancelled = false;
+
+  const done = (async () => {
+    const content = await page.getTextContent();
+    if (cancelled) return;
+    layer = new pdfjs.TextLayer({ textContentSource: content, container, viewport });
+    await layer.render();
+  })().catch((error: unknown) => {
+    if (cancelled) return;
+    const name = (error as { name?: string }).name;
+    if (name === 'AbortException' || name === 'AbortError') return;
+    throw error;
+  });
+
+  return {
+    cancel() {
+      cancelled = true;
+      try {
+        layer?.cancel();
+      } catch {
+        /* already finished */
+      }
+    },
+    done,
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /* text, thumbnails, search                                                    */
 /* -------------------------------------------------------------------------- */

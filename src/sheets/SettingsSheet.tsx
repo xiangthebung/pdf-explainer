@@ -1,17 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Columns2, ExternalLink, Layers, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { chooseDefaultModel, modelRequestsPerMinute, resolveModelSelection } from '~shared/models';
-import type { ModelOption } from '~shared/types';
+import type { ModelOption, StudyStyle } from '~shared/types';
 import { keyStore, sessionStore } from '../lib/storage';
 import { useServerConfig } from '../state/ServerConfigContext';
 import { usePreferences } from '../state/PreferencesContext';
+import { useStudy } from '../state/StudyContext';
 import { Button } from '../components/ui/Button';
-import { SelectField, TextField } from '../components/ui/Field';
+import { SelectField, TextArea, TextField } from '../components/ui/Field';
 import { Notice } from '../components/ui/Feedback';
 import { Sheet } from '../components/ui/Sheet';
+import { StylePicker } from '../components/ui/StylePicker';
 import { SectionLabel, Segmented } from '../components/ui/Surface';
 
 const KEY_URL = 'https://aistudio.google.com/apikey';
+
+/** The prompt reads at most this much; the field should not accept more than it reads. */
+const INSTRUCTIONS_MAX = 1200;
 
 export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () => void }): React.JSX.Element {
   const { prefs, update, apiKey, setApiKey, clearApiKey } = usePreferences();
@@ -171,6 +176,9 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
           </div>
         </section>
 
+        {/* Teaching ------------------------------------------------------ */}
+        <TeachingSection />
+
         {/* Models -------------------------------------------------------- */}
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -258,8 +266,8 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
             />
             <p className="text-[12px] leading-relaxed text-ink-3">
               {prefs.panelMode === 'overlay'
-                ? 'The slide fills the window and the notes float on top, fading out until you reach for them. Press O to switch.'
-                : 'The window is split between the slide and your notes. Press O to float the notes instead.'}
+                ? 'The slide fills the window and the notes float on top, fading out until you reach for them. Press L to cycle layouts.'
+                : 'The window is split between the slide and your notes. Press L to cycle layouts.'}
             </p>
           </div>
         </section>
@@ -290,6 +298,67 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
         </section>
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * The teaching style and the reader's own instructions, editable mid-deck.
+ *
+ * Both existed in the state from the start — `setStyle` and `setInstructions`
+ * were actions nothing called, and `customInstructions` had no field anywhere —
+ * so the style was whatever was chosen on the upload screen and the
+ * instructions were always empty. With a deck open, a change here applies to
+ * the session (the next batch is written that way) and to the preference for
+ * the next deck; without one, only to the preference.
+ *
+ * Instructions are committed on blur and on close rather than per keystroke:
+ * every keystroke would re-render the whole workspace and re-save the session.
+ */
+function TeachingSection(): React.JSX.Element {
+  const { prefs, update } = usePreferences();
+  const { state, actions } = useStudy();
+  const inSession = Boolean(state.source);
+  const style: StudyStyle = inSession ? state.style : prefs.style;
+  const stored = inSession ? state.customInstructions : prefs.customInstructions;
+
+  const [draft, setDraft] = useState(stored);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const commit = (value: string) => {
+    const trimmed = value.trim().slice(0, INSTRUCTIONS_MAX);
+    update({ customInstructions: trimmed });
+    if (inSession && trimmed !== state.customInstructions) actions.setInstructions(trimmed);
+  };
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+
+  /* The sheet unmounts this on close; whatever was typed goes with it. */
+  useEffect(() => () => commitRef.current(draftRef.current), []);
+
+  const setStyle = (next: StudyStyle) => {
+    update({ style: next });
+    if (inSession) actions.setStyle(next);
+  };
+
+  return (
+    <section className="space-y-3">
+      <SectionLabel>How it should teach</SectionLabel>
+      <StylePicker compact value={style} onChange={setStyle} label="Teaching style" />
+      <TextArea
+        label="Anything it should know"
+        value={draft}
+        maxLength={INSTRUCTIONS_MAX}
+        placeholder="e.g. Exam on Friday — focus on definitions and skip the history. I already know linear algebra."
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => commit(draft)}
+        hint={
+          inSession
+            ? 'Applies to the slides explained from now on. To rewrite one you already have, use Re-explain in its header.'
+            : 'Applies to every deck you open. You can change it mid-deck from here.'
+        }
+      />
+    </section>
   );
 }
 

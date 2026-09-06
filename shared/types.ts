@@ -117,6 +117,25 @@ export interface ChatMessage {
   createdAt: number;
   /** Set when the assistant turn failed, so the UI can offer a retry. */
   failed?: boolean;
+  /**
+   * The passage the student highlighted on the slide, when the question came
+   * from a selection. `text` still carries it in prose, so history and export
+   * read naturally; this is what lets the bubble draw it as a quotation.
+   */
+  selection?: string;
+}
+
+/** One line of the deck outline the tutor is shown: a slide and its headline. */
+export interface OutlineEntry {
+  slide: number;
+  title: string;
+}
+
+/** A neighbouring slide's notes, abridged, so the tutor can see across slides. */
+export interface NeighbourNote {
+  slide: number;
+  title: string;
+  text: string;
 }
 
 export interface ServerConfig {
@@ -147,6 +166,11 @@ export interface ExplainRequest {
   pdfBase64: string;
   startSlide: number;
   totalSlides: number;
+  /**
+   * Last slide the batch may cover. Omitted for an ordinary batch, where the
+   * model chooses; equal to `startSlide` to rewrite one slide on its own.
+   */
+  endSlide?: number;
   style: StudyStyle;
   customInstructions?: string;
   model?: string;
@@ -171,6 +195,12 @@ export interface ChatRequest {
   slide: number;
   slideText?: string;
   noteText?: string;
+  /** What the student highlighted on the slide, when the question came from a selection. */
+  selection?: string;
+  /** Headlines of every explained slide, so "this builds on slide 4" can be true. */
+  outline?: OutlineEntry[];
+  /** The notes on the slides either side of this one, abridged. */
+  neighbours?: NeighbourNote[];
   history: { role: 'user' | 'assistant'; text: string }[];
   message: string;
   model?: string;

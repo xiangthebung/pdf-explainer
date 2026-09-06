@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ExplainBatch, SlideNote } from '../shared/types';
-import { deckProgress, emptyState, slideProgress, studyReducer, toSnapshot } from '../src/state/reducer';
+import {
+  deckProgress,
+  emptyState,
+  idleExplain,
+  nextGapFrom,
+  slideProgress,
+  studyReducer,
+  toSnapshot,
+} from '../src/state/reducer';
 import type { StudyState } from '../src/state/types';
 
 function note(slide: number, overrides: Partial<SlideNote> = {}): SlideNote {
@@ -106,7 +114,83 @@ describe('explain flow', () => {
     expect(state.explain.status).toBe('error');
     expect(state.explain.from).toBe(4);
     state = studyReducer(state, { type: 'explain/idle' });
-    expect(state.explain).toEqual({ status: 'idle', from: null, startedAt: null, error: null });
+    expect(state.explain).toEqual(idleExplain);
+  });
+
+  it('records why a batch was asked for, and the style a rewrite wants', () => {
+    let state = openDeck();
+    state = studyReducer(state, { type: 'explain/start', from: 2, mode: 'single', style: 'deep' });
+    expect(state.explain.mode).toBe('single');
+    expect(state.explain.style).toBe('deep');
+    // The session's own style is untouched by a one-slide rewrite.
+    expect(state.style).toBe('auto');
+
+    state = studyReducer(state, { type: 'explain/success', batch: batch([note(2)]) });
+    expect(state.explain).toEqual(idleExplain);
+
+    state = studyReducer(state, { type: 'explain/start', from: 3 });
+    expect(state.explain.mode).toBe('batch');
+    expect(state.explain.style).toBeNull();
+  });
+});
+
+describe('read-ahead', () => {
+  it('is on for a new deck and can be switched off and on', () => {
+    let state = openDeck();
+    expect(state.readAhead).toBe(true);
+    state = studyReducer(state, { type: 'readahead/set', enabled: false });
+    expect(state.readAhead).toBe(false);
+    state = studyReducer(state, { type: 'readahead/set', enabled: true });
+    expect(state.readAhead).toBe(true);
+  });
+
+  it('holds back after a rate limit without raising an error', () => {
+    let state = openDeck();
+    state = studyReducer(state, { type: 'explain/start', from: 4, mode: 'ahead' });
+    state = studyReducer(state, { type: 'explain/wait', untilMs: 1_700_000_000_000 });
+    expect(state.explain.status).toBe('idle');
+    expect(state.explain.error).toBeNull();
+    expect(state.explain.waitUntil).toBe(1_700_000_000_000);
+
+    // The next request, whoever asks for it, clears the wait.
+    state = studyReducer(state, { type: 'explain/start', from: 4 });
+    expect(state.explain.waitUntil).toBeNull();
+  });
+
+  it('drops a pending wait when read-ahead is paused', () => {
+    let state = openDeck();
+    state = studyReducer(state, { type: 'explain/wait', untilMs: 1_700_000_000_000 });
+    state = studyReducer(state, { type: 'readahead/set', enabled: false });
+    expect(state.explain.waitUntil).toBeNull();
+  });
+
+  it('finds the first gap in front of the reader, not the first gap in the deck', () => {
+    let state = openDeck(10);
+    state = studyReducer(state, {
+      type: 'explain/success',
+      batch: batch([note(5), note(6), note(7)], { totalSlides: 10 }),
+    });
+    // Slides 1-4 are unexplained, but a reader on slide 6 is heading for 8.
+    expect(nextGapFrom(state, 6)).toBe(8);
+    expect(nextGapFrom(state, 1)).toBe(1);
+    expect(deckProgress(state).nextGap).toBe(1);
+
+    state = studyReducer(state, {
+      type: 'explain/success',
+      batch: batch([note(8), note(9), note(10)], { totalSlides: 10 }),
+    });
+    expect(nextGapFrom(state, 6)).toBeNull();
+  });
+
+  it('survives a save and restore, and defaults on for older snapshots', () => {
+    let state = openDeck();
+    state = studyReducer(state, { type: 'readahead/set', enabled: false });
+    const snapshot = toSnapshot(state)!;
+    expect(snapshot.readAhead).toBe(false);
+    expect(studyReducer(emptyState, { type: 'session/restore', snapshot }).readAhead).toBe(false);
+
+    const { readAhead: _dropped, ...older } = snapshot;
+    expect(studyReducer(emptyState, { type: 'session/restore', snapshot: older }).readAhead).toBe(true);
   });
 });
 

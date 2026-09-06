@@ -51,6 +51,7 @@ export function NotesOverlay({
   onTogglePin,
   onDock,
   onClose,
+  wakeKey,
   children,
 }: {
   rect: Rect | null;
@@ -63,6 +64,12 @@ export function NotesOverlay({
   onTogglePin: () => void;
   onDock: () => void;
   onClose: () => void;
+  /**
+   * Changes whenever something inside is worth looking at — an error, a batch
+   * landing, a key prompt. The card wakes for a moment each time, so news does
+   * not arrive at a quarter opacity behind the slide.
+   */
+  wakeKey?: string;
   children: ReactNode;
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -70,6 +77,8 @@ export function NotesOverlay({
   /** Awake on arrival, so switching modes never looks like nothing happened. */
   const [greeting, setGreeting] = useState(true);
   const [awake, setAwake] = useState(false);
+  /** Awake because something changed, for long enough to notice it did. */
+  const [nudged, setNudged] = useState(false);
 
   const panel = useFloatingPanel({ ref, rect, fallback, min, commit: onRectChange });
 
@@ -77,6 +86,15 @@ export function NotesOverlay({
     const timer = setTimeout(() => setGreeting(false), 1600);
     return () => clearTimeout(timer);
   }, []);
+
+  const seenWakeKey = useRef(wakeKey);
+  useEffect(() => {
+    if (wakeKey === seenWakeKey.current) return;
+    seenWakeKey.current = wakeKey;
+    setNudged(true);
+    const timer = setTimeout(() => setNudged(false), 2800);
+    return () => clearTimeout(timer);
+  }, [wakeKey]);
 
   /**
    * Focus arrives with the card and leaves with it.
@@ -164,7 +182,7 @@ export function NotesOverlay({
 
   const dragging = panel.gesture !== false;
   // A gesture has to keep the card awake even though the pointer is outside it by then.
-  const active = pinned || awake || greeting || dragging;
+  const active = pinned || awake || greeting || dragging || nudged;
 
   return (
     <div

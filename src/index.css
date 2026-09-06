@@ -631,6 +631,76 @@ select {
 }
 
 /* ---------------------------------------------------------------------------
+   The slide's text layer
+   pdf.js lays one transparent span per text run over the canvas, at the place
+   the glyphs were painted, so the slide can be selected like a document. This
+   is the subset of pdf.js's own viewer stylesheet that positioning depends on;
+   the rest of that file is annotation and highlight chrome this app does not
+   use. `--total-scale-factor` is set by `renderTextLayer`; the `round()` step
+   values are what pdf.js's own size formula expects to find.
+--------------------------------------------------------------------------- */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --text-scale-factor: calc(var(--total-scale-factor, 1) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer span[role='img'] {
+  user-select: none;
+  cursor: default;
+}
+/* The highlight is the whole feedback for a transparent layer, so it is the
+   accent at a strength the slide shows through. */
+.textLayer ::selection {
+  background: color-mix(in srgb, var(--c-accent) 32%, transparent);
+  color: transparent;
+}
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ---------------------------------------------------------------------------
    Diagrams (Mermaid + inline SVG) — always fluid, never overflowing
 --------------------------------------------------------------------------- */
 .figure-frame {

@@ -33,9 +33,12 @@ function check(name, passed, detail = '') {
   console.log(`${at} ${passed ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
+/** Module-level so a failed step can still close it; see the catch at the bottom. */
+let browser = null;
+
 async function run() {
   mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: findChrome(), headless: !HEADED });
+  browser = await chromium.launch({ executablePath: findChrome(), headless: !HEADED });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
@@ -48,8 +51,13 @@ async function run() {
 
   // ---------------------------------------------------------------- upload screen
   await page.goto(BASE, { waitUntil: 'load' });
+  // The app looks for a session to reopen before it paints the upload screen.
+  await page.getByRole('heading', { name: /Understand your lecture slides/i }).waitFor();
   check('upload screen renders', await page.getByRole('heading', { name: /Understand your lecture slides/i }).isVisible());
   check('demo entry point is offered', await page.getByRole('button', { name: /Try the demo lecture/i }).isVisible());
+  // Without a key, the landing shows a real note from the demo deck rather than only a wall.
+  await page.getByText(/What you get for every slide/).waitFor();
+  check('no-key landing previews a real note', (await page.locator('section[aria-label="What the notes look like"] .prose-study').count()) > 0);
   await page.screenshot({ path: join(OUT, '01-upload.png'), fullPage: true });
 
   // ------------------------------------------------------------------- workspace
@@ -69,8 +77,13 @@ async function run() {
   check('Mermaid diagram renders', (await page.locator('svg.mermaid-svg').count()) > 0);
   await page.screenshot({ path: join(OUT, '02-workspace.png'), fullPage: false });
 
-  // Filmstrip thumbnails
+  // Filmstrip thumbnails, and the progress rail beside them.
   check('filmstrip thumbnails render', (await page.locator('[role="tab"][aria-label^="Slide"] img').count()) > 0);
+  check('the filmstrip rail is filled for explained slides', (await page.locator('[data-rail="explained"]').count()) === 10);
+
+  // The slide is a document, not a picture: its words are selectable.
+  await page.locator('.textLayer span').first().waitFor();
+  check('the slide carries a selectable text layer', (await page.locator('.textLayer span').count()) > 3);
 
   // ------------------------------------------------------------ layout controls
   const slideWidth = async () => {
@@ -123,7 +136,10 @@ async function run() {
   await page.waitForTimeout(700);
   check('Escape restores the split view', (await slideWidth()) === splitWidth, `back to ${await slideWidth()}`);
 
-  await page.locator('canvas').first().dblclick();
+  // The text layer sits over the canvas, and a double-clicked word selects
+  // itself rather than flipping the layout, so aim at the slide's empty corner.
+  const layerBox = await page.locator('.textLayer').first().boundingBox();
+  await page.mouse.dblclick(layerBox.x + layerBox.width - 14, layerBox.y + 14);
   await page.waitForTimeout(700);
   check('double-clicking the slide hides the notes', (await slideWidth()) > splitWidth);
   await page.keyboard.press('n');
@@ -314,6 +330,8 @@ async function run() {
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.waitForTimeout(400);
   check('settings explains key handling', (await page.getByText(/never logs or stores it/).count()) > 0);
+  check('settings offers the teaching style mid-deck', await page.getByRole('radio', { name: 'First principles' }).isVisible());
+  check('settings takes custom instructions', await page.getByLabel('Anything it should know').isVisible());
   check('appearance can switch to dark', await page.getByRole('tab', { name: 'Dark' }).isVisible());
   await page.getByRole('tab', { name: 'Dark' }).click();
   await page.waitForTimeout(500);
@@ -325,7 +343,7 @@ async function run() {
   // ------------------------------------------------------------------- chat gate
   await page.getByRole('tab', { name: 'Ask' }).click();
   await page.waitForTimeout(400);
-  check('chat explains what is sent', (await page.getByText(/Nothing else from the deck is sent/).count()) > 0);
+  check('chat explains what is sent', (await page.getByText(/never the whole deck/).count()) > 0);
   check('chat asks for a key before sending', (await page.getByRole('button', { name: /Add your API key to chat/ }).count()) > 0);
   await page.screenshot({ path: join(OUT, '08-chat.png') });
 
@@ -376,6 +394,9 @@ async function run() {
   const keyed = await browser.newContext({ viewport: { width: 1440, height: 940 }, deviceScaleFactor: 2 });
   await keyed.addInitScript(() => {
     sessionStorage.setItem('pdfx.gemini-key', 'test-key-not-real');
+    // The compact model, so read-ahead paces itself at four seconds rather than
+    // twelve: the suite is exercising the pacing, not waiting on it.
+    localStorage.setItem('pdfx.prefs', JSON.stringify({ explainModel: 'gemini-2.5-flash-lite' }));
   });
   const app = await keyed.newPage();
   app.setDefaultTimeout(15_000);
@@ -463,20 +484,41 @@ async function run() {
     },
   });
 
+  /*
+   * The batch is shaped by the request: two slides from wherever it starts, on
+   * a four-slide deck. Read-ahead asks for the second batch on its own once the
+   * reader is within two slides of the frontier, and the first time it does the
+   * mock answers 429 — so the quiet back-off is exercised before the deck fills.
+   */
+  const explainRequests = [];
+  let rateLimitOnce = true;
   await app.route('**/api/explain', async (route) => {
+    const body = route.request().postDataJSON() ?? {};
+    const start = Number(body.startSlide) || 1;
+    explainRequests.push(start);
+    if (start >= 3 && rateLimitOnce) {
+      rateLimitOnce = false;
+      await route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Your Gemini quota is exhausted or rate limited.', code: 'quota', retryable: true }),
+      });
+      return;
+    }
+    const end = Math.min(4, start + 1);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         batch: {
-          requestedFrom: 1,
-          from: 1,
-          to: 2,
+          requestedFrom: start,
+          from: start,
+          to: end,
           totalSlides: 4,
           track: 'quantitative',
           trackNote: 'Quantitative deck: derivations and worked examples.',
-          notes: [note(1), note(2)],
-          warnings: ['Slide 2: skipped a fill-in-the-blank with no answer.'],
+          notes: Array.from({ length: end - start + 1 }, (_, index) => note(start + index)),
+          warnings: start === 1 ? ['Slide 2: skipped a fill-in-the-blank with no answer.'] : [],
         },
         meta: { model: 'gemini-flash-latest', repaired: true, truncated: false },
       }),
@@ -497,7 +539,20 @@ async function run() {
   check('memory hooks stay hidden until revealed', (await app.getByText('Reveal').count()) > 0);
   check('repair warnings are surfaced honestly', (await app.getByText(/Some items were skipped/).count()) > 0);
   check('progress counts the new slides', (await app.getByText('2/4').count()) > 0);
+  check('the notes header offers to rewrite the slide', await app.getByRole('button', { name: 'Re-explain this slide' }).isVisible());
   await app.screenshot({ path: join(OUT, '13-generated-notes.png') });
+
+  // ------------------------------------------------------------------ read-ahead
+  // Slide 1 is two short of the frontier at slide 3, so the next batch is asked
+  // for without a click — paced to the model, and backing off quietly on a 429.
+  await app.locator('[data-readahead="waiting"]').waitFor({ timeout: 12_000 });
+  check('read-ahead backs off quietly on a rate limit', (await app.getByText(/Rate limited · resumes in/).count()) > 0);
+  check('a rate-limited read-ahead is not an error card', (await app.getByText(/Could not generate notes/).count()) === 0);
+  await app.screenshot({ path: join(OUT, '13b-read-ahead-waiting.png') });
+  await app.getByText('4/4').first().waitFor({ timeout: 20_000 });
+  check('read-ahead fills the deck without a click', explainRequests.filter((start) => start === 3).length >= 2);
+  check('requests were spaced, never doubled up', explainRequests.length === 3, explainRequests.join(','));
+  check('the filmstrip rail filled in as notes landed', (await app.locator('[data-rail="explained"]').count()) === 4);
 
   const workedButton = app.getByRole('button', { name: /Show the first step/ });
   if (await workedButton.count()) {
@@ -515,38 +570,74 @@ async function run() {
   check('matching accepts a correct pair', (await app.getByText(/1 of 3 matched/).count()) > 0);
   await app.screenshot({ path: join(OUT, '14-generated-practice.png') });
 
-  // Explain failure path
+  // Explain failure path, through the one-slide rewrite: a request the reader
+  // made, so it earns an error card where a read-ahead 429 did not.
   await app.unroute('**/api/explain');
-  await app.route('**/api/explain', (route) =>
-    route.fulfill({
+  let rewriteRequest = null;
+  await app.route('**/api/explain', (route) => {
+    rewriteRequest = route.request().postDataJSON();
+    return route.fulfill({
       status: 429,
       contentType: 'application/json',
       body: JSON.stringify({ error: 'Your Gemini quota is exhausted or rate limited.', code: 'quota', retryable: true }),
-    }),
-  );
-  await app.getByRole('button', { name: /Continue from 3/ }).click();
+    });
+  });
+  await app.getByRole('button', { name: 'Re-explain this slide' }).click();
+  await app.waitForTimeout(300);
+  check('the rewrite menu names the four styles', (await app.getByRole('menuitemradio').count()) === 4);
+  await app.getByRole('menuitemradio', { name: /First principles/ }).click();
   await app.waitForTimeout(900);
+  check('a rewrite asks for exactly one slide', rewriteRequest?.startSlide === 1 && rewriteRequest?.endSlide === 1 && rewriteRequest?.style === 'deep');
   check('a failed batch explains itself and offers a retry', (await app.getByText(/Could not generate notes/).count()) > 0);
   check('quota message reaches the reader', (await app.getByText(/quota is exhausted/).count()) > 0);
   await app.screenshot({ path: join(OUT, '15-explain-error.png') });
+  await app.getByRole('button', { name: 'Dismiss' }).first().click();
+  await app.waitForTimeout(300);
 
   // Chat
-  await app.route('**/api/chat', (route) =>
-    route.fulfill({
+  let lastChatBody = null;
+  await app.route('**/api/chat', (route) => {
+    lastChatBody = route.request().postDataJSON();
+    return route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         reply: 'Because the residual must be orthogonal to every column of $A$, which gives $A^T(b - Ax) = 0$.',
         meta: { model: 'gemini-flash-lite-latest' },
       }),
-    }),
-  );
+    });
+  });
   await app.getByRole('tab', { name: 'Ask', exact: true }).click();
   await app.waitForTimeout(400);
   await app.getByRole('button', { name: /Why does this matter/ }).click();
   await app.waitForTimeout(900);
   check('tutor reply renders with maths', (await app.getByText(/must be orthogonal to every column/).count()) > 0);
+  check(
+    'the tutor is shown the deck outline and the nearby slides',
+    Array.isArray(lastChatBody?.outline) && lastChatBody.outline.length === 4 && Array.isArray(lastChatBody?.neighbours) && lastChatBody.neighbours.length === 2,
+  );
   await app.screenshot({ path: join(OUT, '16-chat.png') });
+
+  // Select-to-ask: highlight a phrase on the slide and the chip offers to ask about it.
+  await app.locator('.textLayer span').first().waitFor();
+  await app.evaluate(() => {
+    const spans = [...document.querySelectorAll('.textLayer span')].filter((node) => node.textContent?.trim());
+    const range = document.createRange();
+    range.setStart(spans[0].firstChild, 0);
+    range.setEnd(spans[Math.min(2, spans.length - 1)].firstChild, spans[Math.min(2, spans.length - 1)].firstChild.length);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await app.waitForTimeout(500);
+  const askChip = app.getByRole('button', { name: 'Ask about this' });
+  check('highlighting the slide offers to ask about it', await askChip.isVisible());
+  await app.screenshot({ path: join(OUT, '16b-select-to-ask.png') });
+  await askChip.click();
+  await app.waitForTimeout(900);
+  check('the question quotes the highlighted text', (await app.locator('blockquote').count()) > 0);
+  check('the tutor request carries the selection', typeof lastChatBody?.selection === 'string' && lastChatBody.selection.length > 1);
+  await app.screenshot({ path: join(OUT, '16c-asked-about-selection.png') });
 
   // Deck review
   await app.route('**/api/practice', (route) =>
@@ -596,6 +687,24 @@ async function run() {
   check('the "to do" filter hides finished items', (await app.getByText(/Which matrix is idempotent/).count()) === 0);
   await app.screenshot({ path: join(OUT, '17-review.png') });
 
+  // ---------------------------------------------------------------------- resume
+  // A refresh reopens the deck where it was, says so, and offers a way out.
+  await app.waitForTimeout(900); // let the session persist
+  check('the address bar names the session', /[?&]session=/.test(app.url()));
+  const sessionUrl = app.url();
+  await app.reload({ waitUntil: 'load' });
+  await app.getByText('Picked up where you left off').waitFor({ timeout: 20_000 });
+  check('a refresh reopens the deck on its own', (await app.getByRole('heading', { name: /dense-math/ }).count()) > 0);
+  check('the notes survived the refresh', (await app.getByRole('heading', { level: 2, name: /Least squares/ }).count()) > 0);
+  await app.screenshot({ path: join(OUT, '18-resumed.png') });
+  await app.getByRole('button', { name: 'Start something else' }).click();
+  await app.waitForTimeout(500);
+  check('"Start something else" goes back to the upload screen', await app.getByRole('heading', { name: /Understand your lecture slides/i }).isVisible());
+  check('closing the deck clears the session from the address bar', !/[?&]session=/.test(app.url()));
+  await app.goto(sessionUrl, { waitUntil: 'load' });
+  await app.waitForSelector('canvas', { timeout: 30_000 });
+  check('?session= reopens that particular deck', (await app.getByRole('heading', { name: /dense-math/ }).count()) > 0);
+
   await keyed.close();
 
   // --------------------------------------------------------------------- mobile
@@ -613,15 +722,17 @@ async function run() {
   await phone.getByRole('button', { name: /Try the demo lecture/i }).click();
   await phone.waitForSelector('canvas', { timeout: 30_000 });
   await phone.waitForTimeout(1200);
+  // Portrait stacks the slide above the notes; the old "Slide" tab is gone.
+  check('a phone in portrait stacks the slide above the notes', (await phone.locator('main[data-layout="stacked"]').count()) === 1);
   check(
-    'mobile shows a single column with a view switcher',
-    await phone.getByRole('tab', { name: 'Slide', exact: true }).isVisible(),
+    'slide and notes are on screen together',
+    (await phone.locator('canvas').first().isVisible()) && (await phone.getByRole('tab', { name: 'Notes', exact: true }).isVisible()),
   );
+  check('the slide tab is no longer needed', (await phone.getByRole('tab', { name: 'Slide', exact: true }).count()) === 0);
   const noHorizontalScroll = await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   check('mobile has no horizontal overflow', noHorizontalScroll);
   await phone.screenshot({ path: join(OUT, '10-mobile-slide.png') });
-  await phone.getByRole('tab', { name: 'Notes', exact: true }).click();
-  await phone.waitForTimeout(1200);
+  await phone.waitForTimeout(600);
   check('mobile notes render', (await phone.locator('.prose-study').count()) > 0);
   const notesOverflow = await phone.evaluate(() => {
     const nodes = [...document.querySelectorAll('.prose-study, .figure-body, .katex-display')];
@@ -643,7 +754,10 @@ async function run() {
   if (failed.length) process.exitCode = 1;
 }
 
-run().catch((error) => {
+run().catch(async (error) => {
   console.error(error);
   process.exitCode = 1;
+  // A step that threw has not closed the browser, and a headless Chrome holds
+  // the process open indefinitely: the suite would report a failure and never exit.
+  await browser?.close().catch(() => undefined);
 });

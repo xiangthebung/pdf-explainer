@@ -10,16 +10,25 @@ import {
 } from 'react';
 import { normalizeExplainBatch } from '~shared/normalize';
 import { toPlainText } from '~shared/markdown';
-import { resolveModelSelection } from '~shared/models';
+import { modelRequestsPerMinute, resolveModelSelection } from '~shared/models';
 import { planPractice, type PracticeWindow } from '~shared/practicePlan';
-import type { ChatMessage, PracticeItem } from '~shared/types';
+import type { ChatMessage, PracticeItem, StudyStyle } from '~shared/types';
 import { ApiFailure, api, isCancelled } from '../lib/api';
 import { newSessionId, sessionStore } from '../lib/storage';
 import { debounce, sleep } from '../lib/utils';
+import { buildChatContext } from './chatContext';
 import { useServerConfig } from './ServerConfigContext';
 import { usePreferences } from './PreferencesContext';
+import { planReadAhead, readAheadBackoffMs } from './readAhead';
 import { deckProgress, emptyState, studyReducer, toSnapshot, type DeckProgress } from './reducer';
-import type { DeckSource, FailureInfo, StudyState } from './types';
+import type { DeckSource, ExplainMode, FailureInfo, StudyState } from './types';
+
+export interface ExplainOptions {
+  /** Why this batch is being asked for. Changes what the panel shows, not what the server does. */
+  mode?: ExplainMode;
+  /** A style for this request only; the session's own style is untouched. */
+  style?: StudyStyle;
+}
 
 interface StudyActions {
   openDeck(input: { source: DeckSource; totalSlides: number }): string;
@@ -29,10 +38,13 @@ interface StudyActions {
   goto(slide: number): void;
   step(delta: number): void;
   setPages(total: number): void;
-  explainFrom(slide: number): Promise<void>;
+  explainFrom(slide: number, options?: ExplainOptions): Promise<void>;
+  /** Rewrite one slide's notes in a given style, leaving the rest of the deck alone. */
+  reexplainSlide(slide: number, style: StudyStyle): Promise<void>;
   cancelExplain(): void;
   dismissExplainError(): void;
-  sendChat(input: { message: string; slideText: string }): Promise<void>;
+  setReadAhead(enabled: boolean): void;
+  sendChat(input: { message: string; slideText: string; selection?: string }): Promise<void>;
   retryChat(input: { messageId: string; text: string; slideText: string }): Promise<void>;
   clearChat(slide: number): void;
   generatePractice(input?: { append?: boolean }): Promise<void>;
@@ -172,22 +184,31 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
 
   /* --------------------------------------------------------------------- explain */
 
+  /** When the last explain request started, for pacing read-ahead against the rate limit. */
+  const lastExplainStartRef = useRef(0);
+  /** Consecutive 429s while reading ahead; resets on any success. */
+  const quotaStrikesRef = useRef(0);
+
   const explainFrom = useCallback(
-    async (slide: number) => {
+    async (slide: number, options: ExplainOptions = {}) => {
       if (!state.source || state.explain.status === 'running') return;
       const sessionId = state.id;
+      const mode = options.mode ?? 'batch';
       const controller = new AbortController();
       explainRef.current?.abort();
       explainRef.current = controller;
+      lastExplainStartRef.current = Date.now();
 
-      dispatch({ type: 'explain/start', from: slide });
+      dispatch({ type: 'explain/start', from: slide, mode, style: options.style });
       try {
         const { batch } = await api.explain(
           {
             pdfBase64: state.source.base64,
             startSlide: slide,
+            // A rewrite is one slide, whatever the model would rather cover.
+            endSlide: mode === 'single' ? slide : undefined,
             totalSlides: state.totalSlides,
-            style: state.style,
+            style: options.style ?? state.style,
             customInstructions: state.customInstructions,
             model: explainModel,
             apiKey: apiKey || undefined,
@@ -195,11 +216,30 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
           controller.signal,
         );
         if (sessionRef.current !== sessionId) return;
+        quotaStrikesRef.current = 0;
         dispatch({ type: 'explain/success', batch });
       } catch (error) {
         if (sessionRef.current !== sessionId) return;
-        if (isCancelled(error)) dispatch({ type: 'explain/idle' });
-        else dispatch({ type: 'explain/failure', error: toFailure(error) });
+        if (isCancelled(error)) {
+          dispatch({ type: 'explain/idle' });
+          return;
+        }
+        const failure = toFailure(error);
+        /*
+         * A batch nobody asked for should not raise an alarm nobody can act on.
+         * Rate limits are the expected failure on a free key: back off, quietly,
+         * for longer each time. Anything else — a rejected key, a model that has
+         * gone away — is shown once and pauses read-ahead, so dismissing the
+         * notice does not immediately reproduce it.
+         */
+        if (mode === 'ahead' && failure.code === 'quota') {
+          quotaStrikesRef.current += 1;
+          const backoff = readAheadBackoffMs(quotaStrikesRef.current, modelRequestsPerMinute(explainModel));
+          dispatch({ type: 'explain/wait', untilMs: Date.now() + backoff });
+          return;
+        }
+        if (mode === 'ahead') dispatch({ type: 'readahead/set', enabled: false });
+        dispatch({ type: 'explain/failure', error: failure });
       } finally {
         if (explainRef.current === controller) explainRef.current = null;
       }
@@ -207,11 +247,56 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
     [state.source, state.explain.status, state.id, state.totalSlides, state.style, state.customInstructions, explainModel, apiKey],
   );
 
+  const reexplainSlide = useCallback<StudyActions['reexplainSlide']>(
+    (slide, style) => explainFrom(slide, { mode: 'single', style }),
+    [explainFrom],
+  );
+
   const cancelExplain = useCallback(() => {
     explainRef.current?.abort();
     explainRef.current = null;
     dispatch({ type: 'explain/idle' });
   }, []);
+
+  /* A new deck starts with a clean slate for pacing. */
+  useEffect(() => {
+    lastExplainStartRef.current = 0;
+    quotaStrikesRef.current = 0;
+  }, [state.id]);
+
+  /*
+   * Read-ahead. `planReadAhead` decides whether the next batch is due and how
+   * long to wait for the rate limit; this effect is only the timer. It is torn
+   * down and rebuilt on every relevant change, so a manual request, a change of
+   * slide or the pause switch all cancel a pending fetch rather than racing it.
+   */
+  const needsKey = !apiKey.trim();
+  useEffect(() => {
+    const plan = planReadAhead({
+      state,
+      needsKey,
+      lastStartedAt: lastExplainStartRef.current,
+      requestsPerMinute: modelRequestsPerMinute(explainModel),
+      now: Date.now(),
+    });
+    if (!plan) return;
+    const timer = setTimeout(() => void explainFrom(plan.from, { mode: 'ahead' }), plan.delayMs);
+    return () => clearTimeout(timer);
+    // The plan reads the whole state; listing its inputs keeps the timer honest
+    // without rebuilding it on chat and practice traffic.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.source,
+    state.isDemo,
+    state.readAhead,
+    state.explain,
+    state.notes,
+    state.currentSlide,
+    state.totalSlides,
+    needsKey,
+    explainModel,
+    explainFrom,
+  ]);
 
   /* ------------------------------------------------------------------------ chat */
 
@@ -223,15 +308,22 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
       chatRef.current?.abort();
       chatRef.current = controller;
 
-      const note = state.notes[input.userMessage.slide];
+      const slide = input.userMessage.slide;
+      const note = state.notes[slide];
       const noteText = note ? toPlainText(note.blocks.map((block) => block.content).join('\n\n'), 5000) : '';
+      // The deck's outline and the slides either side: enough for a
+      // cross-slide question, bounded so a long deck costs the same as a short one.
+      const context = buildChatContext(state.notes, slide);
 
       try {
         const { reply } = await api.chat(
           {
-            slide: input.userMessage.slide,
+            slide,
             slideText: input.slideText,
             noteText,
+            selection: input.userMessage.selection,
+            outline: context.outline,
+            neighbours: context.neighbours,
             history: input.history
               .filter((message) => !message.failed)
               .map((message) => ({ role: message.role, text: message.text })),
@@ -272,11 +364,19 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
   );
 
   const sendChat = useCallback<StudyActions['sendChat']>(
-    async ({ message, slideText }) => {
+    async ({ message, slideText, selection }) => {
       const text = message.trim();
       if (!text || state.chatPending !== null) return;
       const slide = state.currentSlide;
-      const userMessage: ChatMessage = { id: messageId(), role: 'user', text, slide, createdAt: Date.now() };
+      const quoted = selection?.trim();
+      const userMessage: ChatMessage = {
+        id: messageId(),
+        role: 'user',
+        text,
+        slide,
+        createdAt: Date.now(),
+        ...(quoted ? { selection: quoted } : {}),
+      };
       const history = state.chat[slide] ?? [];
       dispatch({ type: 'chat/send', message: userMessage });
       await runChat({ text, slideText, history, userMessage });
@@ -474,8 +574,10 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
       step: (delta) => dispatch({ type: 'slide/goto', slide: state.currentSlide + delta }),
       setPages: (total) => dispatch({ type: 'deck/pages', totalSlides: total }),
       explainFrom,
+      reexplainSlide,
       cancelExplain,
       dismissExplainError: () => dispatch({ type: 'explain/idle' }),
+      setReadAhead: (enabled) => dispatch({ type: 'readahead/set', enabled }),
       sendChat,
       retryChat,
       clearChat,
@@ -497,6 +599,7 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
       restore,
       reset,
       explainFrom,
+      reexplainSlide,
       cancelExplain,
       sendChat,
       retryChat,
@@ -509,8 +612,8 @@ export function StudyProvider({ children }: { children: ReactNode }): React.JSX.
 
   const progress = useMemo(() => deckProgress(state), [state]);
   const value = useMemo<StudyValue>(
-    () => ({ state, progress, actions, needsKey: !apiKey.trim() }),
-    [state, progress, actions, apiKey],
+    () => ({ state, progress, actions, needsKey }),
+    [state, progress, actions, needsKey],
   );
 
   return <StudyContext.Provider value={value}>{children}</StudyContext.Provider>;

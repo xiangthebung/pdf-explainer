@@ -15,12 +15,29 @@ export interface FailureInfo {
 
 export type JobStatus = 'idle' | 'running' | 'error';
 
+/**
+ * Why a batch was requested. The three look the same to the server and
+ * different to the reader: a batch they asked for gets the skeleton and a Stop
+ * button, one the app fetched ahead of them is a quiet line in the header, and
+ * a single-slide rewrite keeps the old note on screen until the new one lands.
+ */
+export type ExplainMode = 'batch' | 'ahead' | 'single';
+
 export interface ExplainJob {
   status: JobStatus;
   /** Slide the running (or failed) batch started from. */
   from: number | null;
   startedAt: number | null;
   error: FailureInfo | null;
+  mode: ExplainMode;
+  /** The style a single-slide rewrite was asked for, so the panel can name it. */
+  style: StudyStyle | null;
+  /**
+   * Read-ahead is holding back until this time, because the model rate-limited
+   * the last attempt. Idle, not an error: a 429 while fetching ahead of the
+   * reader is expected on a free key and is not worth an alert.
+   */
+  waitUntil: number | null;
 }
 
 /** Where a chunked run has got to, so the panel can show honest progress. */
@@ -69,6 +86,11 @@ export interface StudyState {
   /** Slides the model returned but with nothing worth showing. */
   warnings: string[];
   explain: ExplainJob;
+  /**
+   * Keep explaining ahead of the reader once the first batch has landed. On by
+   * default; the notes header has the switch.
+   */
+  readAhead: boolean;
   chat: Record<number, ChatMessage[]>;
   chatPending: number | null;
   chatError: FailureInfo | null;
@@ -102,6 +124,8 @@ export interface SessionSnapshot {
   completed: Record<string, boolean>;
   isDemo: boolean;
   updatedAt: number;
+  /** Absent in sessions saved before read-ahead existed, which means on. */
+  readAhead?: boolean;
 }
 
 export interface SessionSummary {

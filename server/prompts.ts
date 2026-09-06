@@ -1,4 +1,4 @@
-import type { StudyStyle } from '../shared/types';
+import type { NeighbourNote, OutlineEntry, StudyStyle } from '../shared/types';
 
 /* -------------------------------------------------------------------------- */
 /* shared building blocks                                                      */
@@ -85,17 +85,24 @@ export interface ExplainPromptInput {
 export function explainSystemPrompt(input: ExplainPromptInput): string {
   const { startSlide, totalSlides, style, minBatch, maxBatch } = input;
   const lastPossible = Math.min(totalSlides, startSlide + maxBatch - 1);
+  /* A single-slide run is a rewrite: the student already has notes for it and
+     wants them again in a different voice, so the batching advice is noise. */
+  const single = maxBatch === 1;
+  const scope = single
+    ? `- Explain slide ${startSlide} only, and explain it fully: this is the one slide the student asked about, not part
+  of a batch. Set "endSlide" to ${startSlide}.`
+    : `- Cover between ${minBatch} and ${maxBatch} consecutive slides in this response (slide ${startSlide} through at most ${lastPossible}).
+- Judge by density: dense maths, derivations, code or architecture diagrams mean fewer slides and deeper treatment; title,
+  agenda and transition slides mean more slides and one or two sentences each.
+- Set "endSlide" to the highest slide number you actually explained. The next run starts at endSlide + 1.`;
 
   return `You are a brilliant teaching assistant sitting next to a student, working through the attached lecture deck with
 them. Your explanations are the reason the material finally clicks.
 
 THIS RUN
 - Start at slide ${startSlide}. The deck has ${totalSlides} slide${totalSlides === 1 ? '' : 's'}.
-- Cover between ${minBatch} and ${maxBatch} consecutive slides in this response (slide ${startSlide} through at most ${lastPossible}).
-- Judge by density: dense maths, derivations, code or architecture diagrams mean fewer slides and deeper treatment; title,
-  agenda and transition slides mean more slides and one or two sentences each.
+${scope}
 - Return exactly one entry per slide you covered, including title and transition slides.
-- Set "endSlide" to the highest slide number you actually explained. The next run starts at endSlide + 1.
 - Set "detectedClassType" to "logic" for quantitative material (maths, physics, CS, engineering) or "non-logic" for
   conceptual material (history, biology, psychology, business), and explain the choice in one sentence.
 
@@ -195,21 +202,70 @@ export function practiceUserPrompt(fromSlide: number, toSlide: number): string {
 /* slide-aware chat                                                            */
 /* -------------------------------------------------------------------------- */
 
-export function chatSystemPrompt(input: { slide: number; slideText?: string; noteText?: string }): string {
+export interface ChatPromptInput {
+  slide: number;
+  slideText?: string;
+  noteText?: string;
+  /** What the student highlighted on the slide, if the question came from a selection. */
+  selection?: string;
+  /** Headlines of the explained slides, in order. */
+  outline?: OutlineEntry[];
+  /** The notes on the slides either side of this one, abridged. */
+  neighbours?: NeighbourNote[];
+}
+
+/** Ceilings on what the tutor is told, so a long deck cannot inflate a question into a book. */
+export const CHAT_CONTEXT_LIMITS = {
+  selectionChars: 1200,
+  outlineEntries: 300,
+  outlineTitleChars: 120,
+  neighbours: 4,
+  neighbourChars: 1500,
+} as const;
+
+export function chatSystemPrompt(input: ChatPromptInput): string {
   const slideText = (input.slideText ?? '').trim().slice(0, 6000);
   const noteText = (input.noteText ?? '').trim().slice(0, 6000);
+  const selection = (input.selection ?? '').trim().slice(0, CHAT_CONTEXT_LIMITS.selectionChars);
+  const outline = (input.outline ?? []).slice(0, CHAT_CONTEXT_LIMITS.outlineEntries);
+  const neighbours = (input.neighbours ?? []).slice(0, CHAT_CONTEXT_LIMITS.neighbours);
+
+  /* The deck, as far as the tutor can see it. The prompt has always said "reference
+     other slides by number"; until the outline and the neighbours arrived there
+     was nothing to reference, and cross-slide questions were answered from air. */
+  const outlineBlock = outline.length
+    ? `\nDECK OUTLINE (slide number: headline). Cite slides by these numbers when a question reaches across the deck.
+${outline.map((entry) => `${entry.slide}: ${entry.title.slice(0, CHAT_CONTEXT_LIMITS.outlineTitleChars)}`).join('\n')}`
+    : '';
+  const neighbourBlock = neighbours.length
+    ? `\nNEARBY SLIDES (the student's notes, abridged). Not the slide being asked about, but the ones around it:
+${neighbours
+  .map(
+    (entry) =>
+      `Slide ${entry.slide}${entry.title ? ` — ${entry.title.slice(0, CHAT_CONTEXT_LIMITS.outlineTitleChars)}` : ''}\n"""\n${entry.text.slice(0, CHAT_CONTEXT_LIMITS.neighbourChars)}\n"""`,
+  )
+  .join('\n')}`
+    : '';
+  const selectionBlock = selection
+    ? `\nThe student highlighted this passage on slide ${input.slide} and is asking about it specifically:
+"""
+${selection}
+"""
+Answer about that passage first; bring in the rest of the slide only where it helps.`
+    : '';
 
   return `You are a patient, precise tutor helping a student with slide ${input.slide} of their lecture deck. You are talking,
 not lecturing: answer the question that was asked, at the length it deserves.
 
 CONTEXT
 ${slideText ? `Text extracted from slide ${input.slide}:\n"""\n${slideText}\n"""` : `No text layer was available for slide ${input.slide}.`}
-${noteText ? `\nThe study notes the student is reading:\n"""\n${noteText}\n"""` : ''}
+${noteText ? `\nThe study notes the student is reading:\n"""\n${noteText}\n"""` : ''}${selectionBlock}${neighbourBlock}${outlineBlock}
 
 HOW TO ANSWER
 - Lead with the answer, then the reasoning. Two or three short paragraphs at most unless the student asks for depth.
 - Walk through derivations and code step by step when that is what was asked.
-- Reference other slides by number when relevant ("this builds on slide 4").
+- Reference other slides by number when relevant ("this builds on slide 4"). Use the outline and nearby slides above
+  for that; do not guess at slides you have not been shown.
 - If the slides do not contain the answer, say so plainly, then answer from general knowledge and label it as such.
 - Never claim something is on the slide when it is not, and never fabricate a citation.
 - Plot curves, vectors and geometry as an inline \`\`\`svg block with a viewBox and stroke="currentColor". Use \`\`\`mermaid for

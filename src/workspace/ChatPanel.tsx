@@ -8,6 +8,7 @@ import { Button, IconButton } from '../components/ui/Button';
 import { EmptyState, Notice } from '../components/ui/Feedback';
 import { TINT_CLASS, type Tint } from '../components/ui/Surface';
 import { usePdf } from './PdfContext';
+import { askAboutText } from './selection';
 
 const SUGGESTIONS: { text: string; tint: Tint }[] = [
   { text: 'Explain this slide as simply as possible', tint: 'cyan' },
@@ -16,7 +17,24 @@ const SUGGESTIONS: { text: string; tint: Tint }[] = [
   { text: 'Give me a concrete example', tint: 'teal' },
 ];
 
-export function ChatPanel({ onOpenSettings }: { onOpenSettings: () => void }): React.JSX.Element {
+/**
+ * A question handed in from outside the panel — the select-to-ask chip on the
+ * slide. `nonce` is what makes the same phrase asked twice two questions.
+ */
+export interface AskPrompt {
+  selection: string;
+  nonce: number;
+}
+
+export function ChatPanel({
+  onOpenSettings,
+  prompt = null,
+  onPromptConsumed,
+}: {
+  onOpenSettings: () => void;
+  prompt?: AskPrompt | null;
+  onPromptConsumed?: () => void;
+}): React.JSX.Element {
   const { state, actions, needsKey } = useStudy();
   const { doc } = usePdf();
   const [draft, setDraft] = useState('');
@@ -50,14 +68,29 @@ export function ChatPanel({ onOpenSettings }: { onOpenSettings: () => void }): R
   }, [doc, slide]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, selection?: string) => {
       const message = text.trim();
       if (!message || pending) return;
       setDraft('');
-      await actions.sendChat({ message, slideText: await slideText() });
+      await actions.sendChat({ message, slideText: await slideText(), selection });
     },
     [actions, pending, slideText],
   );
+
+  /*
+   * A selection arriving from the slide is sent as it stands. If it cannot be —
+   * no key yet, or an answer still in flight — it becomes the draft instead, so
+   * the phrase the reader went to the trouble of highlighting is not lost.
+   */
+  const consumedRef = useRef(0);
+  useEffect(() => {
+    if (!prompt || prompt.nonce === consumedRef.current) return;
+    consumedRef.current = prompt.nonce;
+    const text = askAboutText(prompt.selection);
+    if (needsKey || state.chatPending !== null) setDraft(text);
+    else void send(text, prompt.selection);
+    onPromptConsumed?.();
+  }, [prompt, needsKey, state.chatPending, send, onPromptConsumed]);
 
   const lastUserMessage = [...messages].reverse().find((entry) => entry.role === 'user');
 
@@ -107,7 +140,15 @@ export function ChatPanel({ onOpenSettings }: { onOpenSettings: () => void }): R
               tint="cyan"
               icon={<MessageCircleQuestion className="h-5 w-5" />}
               title={`Ask about slide ${slide}`}
-              description="The tutor sees this slide's text and your notes for it. Nothing else from the deck is sent."
+              description={
+                <>
+                  The tutor sees this slide's text, your notes for it and the notes on the slides either side — never
+                  the whole deck.
+                  <span className="mt-1.5 block text-ink-3">
+                    Highlight anything on the slide and choose “Ask about this”.
+                  </span>
+                </>
+              }
             />
           ) : null}
 
@@ -125,7 +166,19 @@ export function ChatPanel({ onOpenSettings }: { onOpenSettings: () => void }): R
                 )}
               >
                 {message.role === 'user' ? (
-                  <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
+                  message.selection ? (
+                    /* A question that began as a highlight is shown as one: the
+                       passage quoted, then the ask. Same words as `text`, drawn
+                       so the reader can see which part of the slide it was. */
+                    <>
+                      <blockquote className="border-l-2 border-white/60 pl-2.5 text-[13px] italic leading-relaxed text-white/90">
+                        {message.selection}
+                      </blockquote>
+                      <p className="mt-1.5 leading-relaxed">Explain this.</p>
+                    </>
+                  ) : (
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
+                  )
                 ) : (
                   <Markdown>{message.text}</Markdown>
                 )}

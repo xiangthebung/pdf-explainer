@@ -20,12 +20,13 @@
  */
 
 import { normalizeExplainBatch, normalizePracticeSet, shuffleQuizOptions } from '../shared/normalize';
-import type { ServerConfig, StudyStyle } from '../shared/types';
+import type { NeighbourNote, OutlineEntry, ServerConfig, StudyStyle } from '../shared/types';
 import { config } from './config';
 import { ApiError } from './errors';
 import { generateJson, generateText, listAvailableModels, pdfPart, resolveApiKey } from './gemini';
 import { log, redact } from './log';
 import {
+  CHAT_CONTEXT_LIMITS,
   chatSystemPrompt,
   explainSystemPrompt,
   explainUserPrompt,
@@ -180,6 +181,57 @@ export function rateLimit(clientId: string, bucket = 'api', max = config.rateLim
 
 const MIN_BATCH = 3;
 const MAX_BATCH = 12;
+
+/**
+ * How many slides one explain request may cover.
+ *
+ * The model chooses within the window, by density. `endSlide` narrows the
+ * window from the client's side: a single-slide rewrite sends it equal to
+ * `startSlide`, and a model that would rather cover twelve is not given the
+ * room. Anything before `startSlide` or off the end of the deck is ignored
+ * rather than refused, because the client's page count can lag the document's.
+ */
+export function batchBounds(
+  startSlide: number,
+  totalSlides: number,
+  endSlide?: number,
+): { minBatch: number; maxBatch: number } {
+  const remaining = totalSlides - startSlide + 1;
+  const requested = endSlide !== undefined && endSlide >= startSlide ? endSlide - startSlide + 1 : MAX_BATCH;
+  const maxBatch = Math.max(1, Math.min(MAX_BATCH, remaining, requested));
+  const minBatch = Math.min(MIN_BATCH, maxBatch);
+  return { minBatch, maxBatch };
+}
+
+/**
+ * The deck context a chat request may carry, read with the same suspicion as
+ * anything else in a body: sizes are clamped here rather than trusted, so the
+ * prompt's own ceilings are a second line and not the only one.
+ */
+export function readChatContext(
+  body: Record<string, unknown>,
+  totalSlides: number,
+): { selection: string; outline: OutlineEntry[]; neighbours: NeighbourNote[] } {
+  const selection = readText(body.selection, CHAT_CONTEXT_LIMITS.selectionChars).trim();
+  const outline: OutlineEntry[] = (Array.isArray(body.outline) ? body.outline : [])
+    .slice(0, CHAT_CONTEXT_LIMITS.outlineEntries)
+    .flatMap((entry) => {
+      const item = asRecord(entry);
+      const slide = readInt(item.slide, 0, 0, totalSlides);
+      const title = readText(item.title, CHAT_CONTEXT_LIMITS.outlineTitleChars).trim();
+      return slide > 0 && title ? [{ slide, title }] : [];
+    });
+  const neighbours: NeighbourNote[] = (Array.isArray(body.neighbours) ? body.neighbours : [])
+    .slice(0, CHAT_CONTEXT_LIMITS.neighbours)
+    .flatMap((entry) => {
+      const item = asRecord(entry);
+      const slide = readInt(item.slide, 0, 0, totalSlides);
+      const text = readText(item.text, CHAT_CONTEXT_LIMITS.neighbourChars).trim();
+      const title = readText(item.title, CHAT_CONTEXT_LIMITS.outlineTitleChars).trim();
+      return slide > 0 && (text || title) ? [{ slide, title, text }] : [];
+    });
+  return { selection, outline, neighbours };
+}
 /**
  * Output ceilings. Generous enough for the work, tight enough that a model that
  * starts repeating itself hits the wall in seconds instead of burning a minute
@@ -228,9 +280,8 @@ export async function explain(raw: unknown, ctx: ApiContext): Promise<ApiRespons
     const pdf = readPdf(body);
     const totalSlides = readInt(body.totalSlides ?? body.totalPdfPages, 1, 1, 2000);
     const startSlide = readInt(body.startSlide, 1, 1, totalSlides);
-    const remaining = totalSlides - startSlide + 1;
-    const maxBatch = Math.min(MAX_BATCH, remaining);
-    const minBatch = Math.min(MIN_BATCH, maxBatch);
+    const endSlide = body.endSlide === undefined ? undefined : readInt(body.endSlide, startSlide, 1, totalSlides);
+    const { minBatch, maxBatch } = batchBounds(startSlide, totalSlides, endSlide);
 
     const result = await generateJson({
       apiKey,
@@ -368,8 +419,10 @@ export async function chat(raw: unknown, ctx: ApiContext): Promise<ApiResponse> 
     if (!message) throw new ApiError(400, 'bad_request', 'The message was empty.');
 
     const slide = readInt(body.slide, 1, 1, 2000);
-    // Only the current slide's text and notes are sent — never the whole PDF,
-    // which keeps every follow-up cheap and limits what leaves the device.
+    // The current slide's text and notes, the headlines of the explained slides
+    // and the notes either side — never the whole PDF. Every follow-up stays
+    // cheap, and what leaves the device is bounded whatever the deck's size.
+    const context = readChatContext(body, 2000);
     const history = (Array.isArray(body.history) ? body.history : [])
       .slice(-8)
       .map((entry) => {
@@ -391,6 +444,9 @@ export async function chat(raw: unknown, ctx: ApiContext): Promise<ApiResponse> 
         slide,
         slideText: readText(body.slideText, 6000),
         noteText: readText(body.noteText, 6000),
+        selection: context.selection,
+        outline: context.outline,
+        neighbours: context.neighbours,
       }),
       contents: [
         ...history.map((entry) => ({ role: entry.role, parts: [{ text: entry.text }] })),

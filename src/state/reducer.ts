@@ -1,5 +1,16 @@
 import type { ChatMessage, ExplainBatch, PracticeItem, SlideNote, StudyStyle } from '~shared/types';
-import type { DeckSource, FailureInfo, SessionSnapshot, StudyState } from './types';
+import type { DeckSource, ExplainJob, ExplainMode, FailureInfo, SessionSnapshot, StudyState } from './types';
+
+/** Nothing running, nothing failed, nothing waited for. */
+export const idleExplain: ExplainJob = {
+  status: 'idle',
+  from: null,
+  startedAt: null,
+  error: null,
+  mode: 'batch',
+  style: null,
+  waitUntil: null,
+};
 
 export const emptyState: StudyState = {
   id: '',
@@ -12,7 +23,8 @@ export const emptyState: StudyState = {
   trackNote: '',
   notes: {},
   warnings: [],
-  explain: { status: 'idle', from: null, startedAt: null, error: null },
+  explain: idleExplain,
+  readAhead: true,
   chat: {},
   chatPending: null,
   chatError: null,
@@ -51,10 +63,13 @@ export type StudyAction =
   | { type: 'deck/pages'; totalSlides: number }
   | { type: 'style/set'; style: StudyStyle }
   | { type: 'instructions/set'; value: string }
-  | { type: 'explain/start'; from: number }
+  | { type: 'explain/start'; from: number; mode?: ExplainMode; style?: StudyStyle }
   | { type: 'explain/success'; batch: ExplainBatch }
   | { type: 'explain/failure'; error: FailureInfo }
   | { type: 'explain/idle' }
+  /** Read-ahead was rate-limited: stand down until then, without an alert. */
+  | { type: 'explain/wait'; untilMs: number }
+  | { type: 'readahead/set'; enabled: boolean }
   | { type: 'notes/clear' }
   | { type: 'warnings/dismiss' }
   | { type: 'chat/send'; message: ChatMessage }
@@ -169,6 +184,7 @@ export function studyReducer(state: StudyState, action: StudyAction): StudyState
         quizAnswers: snapshot.quizAnswers ?? {},
         completed: snapshot.completed ?? {},
         isDemo: Boolean(snapshot.isDemo),
+        readAhead: snapshot.readAhead ?? true,
         updatedAt: snapshot.updatedAt,
       };
     }
@@ -199,7 +215,18 @@ export function studyReducer(state: StudyState, action: StudyAction): StudyState
       return touch({ ...state, customInstructions: action.value });
 
     case 'explain/start':
-      return { ...state, explain: { status: 'running', from: action.from, startedAt: Date.now(), error: null } };
+      return {
+        ...state,
+        explain: {
+          status: 'running',
+          from: action.from,
+          startedAt: Date.now(),
+          error: null,
+          mode: action.mode ?? 'batch',
+          style: action.style ?? null,
+          waitUntil: null,
+        },
+      };
 
     case 'explain/success': {
       const batch = action.batch;
@@ -212,15 +239,28 @@ export function studyReducer(state: StudyState, action: StudyAction): StudyState
         trackNote: batch.trackNote || state.trackNote,
         totalSlides: batch.totalSlides && batch.totalSlides > 0 ? batch.totalSlides : state.totalSlides,
         warnings: batch.warnings.length ? batch.warnings : state.warnings,
-        explain: { status: 'idle', from: null, startedAt: null, error: null },
+        explain: idleExplain,
       });
     }
 
     case 'explain/failure':
-      return { ...state, explain: { ...state.explain, status: 'error', error: action.error } };
+      return { ...state, explain: { ...state.explain, status: 'error', error: action.error, waitUntil: null } };
 
     case 'explain/idle':
-      return { ...state, explain: { status: 'idle', from: null, startedAt: null, error: null } };
+      return { ...state, explain: idleExplain };
+
+    case 'explain/wait':
+      return { ...state, explain: { ...idleExplain, waitUntil: action.untilMs } };
+
+    case 'readahead/set':
+      if (state.readAhead === action.enabled) return state;
+      // Switching it off also drops a pending rate-limit wait: there is nothing
+      // left to wait for, and the header should not keep counting down.
+      return touch({
+        ...state,
+        readAhead: action.enabled,
+        explain: action.enabled || state.explain.waitUntil === null ? state.explain : idleExplain,
+      });
 
     case 'notes/clear':
       return touch({ ...state, notes: {}, warnings: [], track: null, trackNote: '' });
@@ -469,6 +509,22 @@ export function deckProgress(state: StudyState): DeckProgress {
   };
 }
 
+/**
+ * The first slide at or after `slide` with no explanation, or null when
+ * everything from there to the end is covered.
+ *
+ * Not the same question as `nextGap`. A reader who jumped to slide 20 and
+ * explained from there has a gap at slide 1 that read-ahead must not chase:
+ * the frontier that matters is the one in front of them.
+ */
+export function nextGapFrom(state: StudyState, slide: number): number | null {
+  const total = Math.max(0, state.totalSlides);
+  for (let page = Math.max(1, slide); page <= total; page += 1) {
+    if (!state.notes[page]) return page;
+  }
+  return null;
+}
+
 export function toSnapshot(state: StudyState): SessionSnapshot | null {
   if (!state.source || !state.id) return null;
   return {
@@ -490,6 +546,7 @@ export function toSnapshot(state: StudyState): SessionSnapshot | null {
     quizAnswers: state.quizAnswers,
     completed: state.completed,
     isDemo: state.isDemo,
+    readAhead: state.readAhead,
     updatedAt: state.updatedAt || Date.now(),
   };
 }

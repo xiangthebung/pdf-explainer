@@ -49,9 +49,9 @@ returns three settings:
 | --- | --- |
 | `GET /api/config` | What the client needs to know: is a key required, upload ceiling |
 | `POST /api/models` | Which models *this key* can call. Separate, and a POST, so the key never lands in a cacheable URL |
-| `POST /api/explain` | One batch of slide notes, sized by content density |
+| `POST /api/explain` | One batch of slide notes, sized by content density — or one slide, rewritten, when `endSlide` pins it |
 | `POST /api/practice` | Review items for one slide range: quizzes, matching pairs, blanks |
-| `POST /api/chat` | One tutor answer for the current slide |
+| `POST /api/chat` | One tutor answer for the current slide, with the slides either side and the deck's outline for context |
 
 ## Design decisions worth knowing
 
@@ -59,6 +59,50 @@ returns three settings:
 based on density, so reading starts in seconds instead of after a five-minute
 whole-deck run. The panel always offers the one action that makes sense next:
 explain from here, or continue from the first gap.
+
+**And they keep ahead of you.** The batch after the first used to wait for a
+click: you reached slide 6, read "Slide 6 is not explained yet", pressed the
+button, and waited a minute — while the app knew where you were and where the
+notes stopped the whole time. Once the first batch has landed, the next is
+requested on its own as soon as you are within two slides of the first
+unexplained slide *ahead* of you (`src/state/readAhead.ts`; a gap behind you,
+from explaining mid-deck, is not chased). The notes header shows "Explaining
+ahead…" while it works and has the pause switch; the filmstrip's rail fills in
+as notes land and shimmers over the slides a running batch will cover.
+
+Two rules keep it polite. Never two requests at once: a running or failed job
+blocks the next, and a failure stays on screen until you dismiss it, so a
+rejected key cannot become a loop. And the model's rate limit is respected the
+way `shared/practicePlan.ts` respects it for review sets — requests are spaced
+by `modelRequestsPerMinute`, and a 429 while reading ahead is not an alert but a
+quiet countdown that doubles each time it repeats. The first batch is still
+yours to press, because that is the moment you choose the style and decide to
+spend your quota.
+
+**Highlight to ask.** The slide is rendered to a canvas, and a canvas is a
+picture: you could not select a word on it. pdf.js's text layer now sits over
+the canvas (`renderTextLayer` in `src/lib/pdf.ts`), so the slide selects like a
+document, and selecting a phrase raises a small "Ask about this" chip
+(`src/workspace/selection.ts`). Pressing it opens the Ask tab with the phrase
+quoted and sends it as the question; the request carries the selection as its
+own field, so the tutor is told to answer about that passage first.
+
+**The tutor can see the slides around it.** Its prompt has always said
+"reference other slides by number", and for a long time it had nothing to
+reference: the request carried the current slide's text and notes and not a word
+about any other. It now also carries the headline of every explained slide and
+the notes on the two slides either side, abridged (`src/state/chatContext.ts`),
+so "how does this follow from the last slide?" has its answer in the context.
+Every part is bounded on both ends — client and server — so a 300-slide deck
+costs the same handful of kilobytes as a ten-slide one, and the whole PDF is
+still never sent with a question.
+
+**The style is not frozen at upload.** `setStyle` and `setInstructions` were
+actions nothing called, and custom instructions had no field anywhere. Settings
+now has the four teaching styles and an instructions box, editable mid-deck: a
+change applies to the batches written from then on, and the header of every
+note has "Re-explain", which asks for that one slide again in the style you
+pick — `endSlide` equal to `startSlide` — and leaves the rest of the deck alone.
 
 **There is no model catalogue.** There was one — five hardcoded ids — and a list
 of model names goes stale the week a new one ships, while also offering people
@@ -187,7 +231,8 @@ so this is a note about what is degraded, not a refusal.
 to `localStorage` if you tick *Remember on this device*. It is sent with each
 request, forwarded to Google, and never logged: `server/log.ts` redacts key-shaped
 strings from every log line and error message. Chat sends the current slide's text
-and notes — not the whole deck.
+and notes, the notes on the two slides either side and the headlines of the
+explained slides — not the whole deck.
 
 That redaction is a list of patterns, and a list of patterns quietly stops being
 true when a provider changes format. It knew `AIza…` and not `AQ.Ab8…`, which is
@@ -195,9 +240,22 @@ what AI Studio mints today — and Google echoes the rejected key back inside so
 of its own "API key not valid" messages, which is precisely the string that
 reaches `log.warn`. Both formats are pinned in `tests/log.test.ts` now.
 
-**Sessions survive a refresh.** Deck, notes, answers and conversations are stored
-in IndexedDB, and the upload screen offers to pick up where you left off. Notes
-export as one portable Markdown file with the maths, code and diagrams intact.
+**Sessions survive a refresh — and come back on their own.** Deck, notes, answers
+and conversations are stored in IndexedDB. They always were; what a refresh used
+to do was land on the upload screen, where a list a scroll below the hero offered
+only the decks that had notes. Upload a deck, read to slide 12, reload: landing
+page, deck gone. Now the most recent session reopens on load, at the slide it was
+on, with a card that says so and a "Start something else" way back; the upload
+screen lists every saved deck, explained or not; and the address bar carries
+`?session=<id>` (`src/lib/resume.ts`), so a tab the browser restores next week
+comes back to the deck it was showing rather than to the newest. Closing a deck
+is the way to the upload screen, and it stays there. Notes export as one portable
+Markdown file with the maths, code and diagrams intact.
+
+**No key, no wall.** Nothing but the demo works without a Gemini key, and the
+landing page said so without showing what the key buys. It now shows a real note
+from the demo deck — through the same normaliser and renderer as a live response,
+so the maths and the callout are the real ones — beneath the same key copy.
 
 ## Keyboard
 
@@ -244,6 +302,11 @@ question: it hides the browser, and it composes with any of the three layouts.
 Leaving "slide only" puts back the layout you had — including whether the
 thumbnails were showing — rather than a default, and every choice is remembered
 for next time.
+
+**On a phone** held upright, the slide sits above the notes rather than on a tab
+of its own: at 390px wide a 16:9 slide is about 200px tall, which leaves most of
+the screen for reading, and reading while looking at the slide is the point.
+Landscape keeps the tabs; there is no height to share.
 
 ## Scripts
 

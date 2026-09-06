@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Clock,
@@ -12,7 +12,6 @@ import {
   Target,
   Trash2,
 } from 'lucide-react';
-import { STUDY_STYLES } from '~shared/types';
 import { sessionStore } from '../lib/storage';
 import { cx, formatBytes, plural, relativeTime } from '../lib/utils';
 import { useServerConfig } from '../state/ServerConfigContext';
@@ -21,7 +20,8 @@ import { useStudy } from '../state/StudyContext';
 import type { SessionSummary } from '../state/types';
 import { Button, IconButton } from '../components/ui/Button';
 import { Notice, Spinner } from '../components/ui/Feedback';
-import { Chip, STYLE_TINTS, TINT_CLASS, type Tint } from '../components/ui/Surface';
+import { StylePicker } from '../components/ui/StylePicker';
+import { Chip, type Tint } from '../components/ui/Surface';
 
 /** The three things this app does, in the three colours it does them in. */
 const HIGHLIGHTS: { label: string; tint: Tint; icon: typeof BookOpen }[] = [
@@ -30,7 +30,12 @@ const HIGHLIGHTS: { label: string; tint: Tint; icon: typeof BookOpen }[] = [
   { label: 'Active recall', tint: 'amber', icon: Target },
 ];
 
-
+/**
+ * A real note from the demo deck, shown to a visitor with no key. It brings the
+ * Markdown and KaTeX stack with it, which the upload screen otherwise avoids,
+ * so it loads after the page rather than before it.
+ */
+const DemoPreview = lazy(() => import('./DemoPreview'));
 
 export function UploadScreen({
   onOpenSettings,
@@ -52,8 +57,11 @@ export function UploadScreen({
   /* A key is present, and asking Google what it can do did not work. */
   const keyUnverified = !needsKey && Boolean(config.modelsError);
 
+  /* Every saved deck, explained or not. A deck you uploaded and read to slide
+     twelve is worth going back to whether or not a note was ever written for it —
+     and it is the case that used to be lost entirely on a refresh. */
   const refreshSessions = useCallback(() => {
-    void sessionStore.list().then((list) => setSessions(list.filter((entry) => entry.explainedSlides > 0).slice(0, 3)));
+    void sessionStore.list().then((list) => setSessions(list.slice(0, 3)));
   }, []);
 
   useEffect(refreshSessions, [refreshSessions]);
@@ -214,36 +222,6 @@ export function UploadScreen({
           )}
         </div>
 
-        {/* Study style ---------------------------------------------------- */}
-        <section className="mt-7">
-          <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-3">How should it teach?</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {STUDY_STYLES.map((style) => {
-              const selected = prefs.style === style.id;
-              return (
-                <button
-                  key={style.id}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => update({ style: style.id })}
-                  className={cx(
-                    'rounded-[13px] border p-3 text-left transition-colors',
-                    TINT_CLASS[STYLE_TINTS[style.id] ?? 'accent'],
-                    selected
-                      ? 'tint-ring bg-[var(--tint-soft)]'
-                      : 'border-line bg-surface hover:border-line-strong',
-                  )}
-                >
-                  <span className={cx('text-[13px] font-medium', selected ? 'tint-text' : 'text-ink')}>
-                    {style.label}
-                  </span>
-                  <span className="mt-0.5 block text-[11.5px] leading-snug text-ink-3">{style.description}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
         {/* Resume -------------------------------------------------------- */}
         {sessions.length > 0 ? (
           <section className="mt-7">
@@ -260,7 +238,10 @@ export function UploadScreen({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13.5px] font-medium text-ink">{session.name}</span>
                       <span className="block text-[12px] text-ink-3">
-                        {session.explainedSlides} of {plural(session.totalSlides, 'slide')} explained ·{' '}
+                        {session.explainedSlides > 0
+                          ? `${session.explainedSlides} of ${plural(session.totalSlides, 'slide')} explained`
+                          : `On slide ${session.currentSlide} of ${session.totalSlides} · not explained yet`}
+                        {' · '}
                         {relativeTime(session.updatedAt)}
                       </span>
                     </span>
@@ -280,6 +261,20 @@ export function UploadScreen({
             </ul>
           </section>
         ) : null}
+
+        {/* What the notes look like, for a visitor who cannot generate any yet. */}
+        {needsKey ? (
+          <Suspense fallback={null}>
+            <DemoPreview onOpenDemo={() => void actions.openDemo()} />
+          </Suspense>
+        ) : null}
+
+        {/* Study style ---------------------------------------------------- */}
+        <section className="mt-7">
+          <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-ink-3">How should it teach?</p>
+          <StylePicker value={prefs.style} onChange={(style) => update({ style })} />
+          <p className="mt-2 text-[12px] text-ink-3">You can change this, and add your own instructions, from Settings at any time.</p>
+        </section>
 
         {/* Key + footer -------------------------------------------------- */}
         {/*
@@ -309,8 +304,9 @@ export function UploadScreen({
                     ? config.modelsError
                     : /* "only while notes are being generated" was not true: a review set
                          sends the deck as well, one slide window at a time. Chat does not —
-                         it sends the current slide's text and notes. The line has to cover
-                         both senders or it is a privacy claim that is quietly wrong. */
+                         it sends the current slide's text, its notes and the notes either
+                         side. The line has to cover both senders or it is a privacy claim
+                         that is quietly wrong. */
                       'Your key is stored locally. Your deck is sent to Google when notes or review items are generated, and not otherwise.'}
               </p>
             </div>
@@ -327,7 +323,7 @@ export function UploadScreen({
 
         <footer className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[12px] text-ink-3">
           <span className="inline-flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5" /> Notes arrive in batches, so reading starts in seconds
+            <Sparkles className="h-3.5 w-3.5" /> Notes arrive in batches and keep ahead of you as you read
           </span>
           <button type="button" onClick={onOpenShortcuts} className="inline-flex items-center gap-1.5 hover:text-ink">
             <Keyboard className="h-3.5 w-3.5" /> Keyboard shortcuts

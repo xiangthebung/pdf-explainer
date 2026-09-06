@@ -1,41 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Brain,
-  Compass,
-  Eye,
-  KeyRound,
-  Lightbulb,
-  RotateCcw,
-  Route,
-  Sparkles,
-  TriangleAlert,
-} from 'lucide-react';
-import type { CalloutKind, ContentBlock, SlideNote } from '~shared/types';
-import { cx, formatDuration, plural } from '../lib/utils';
-import { slideProgress } from '../state/reducer';
+import { RotateCcw, Sparkles } from 'lucide-react';
+import type { SlideNote } from '~shared/types';
+import { formatDuration, plural } from '../lib/utils';
+import { nextGapFrom, slideProgress } from '../state/reducer';
+import { READ_AHEAD_DISTANCE } from '../state/readAhead';
 import { useStudy } from '../state/StudyContext';
-import { Markdown } from '../components/content/Markdown';
+import type { ExplainJob } from '../state/types';
 import { Button } from '../components/ui/Button';
 import { EmptyState, NoteSkeleton, Notice, Spinner } from '../components/ui/Feedback';
-import { Chip, TINT_CLASS, type Tint } from '../components/ui/Surface';
+import { styleLabel } from '../components/ui/StylePicker';
+import { Chip } from '../components/ui/Surface';
 import { ClozeCard } from '../practice/ClozeCard';
 import { MatchGame } from '../practice/MatchGame';
 import { QuizCard } from '../practice/QuizCard';
 import { WorkedExampleCard } from '../practice/WorkedExampleCard';
-
-/**
- * Each callout keeps one hue for the whole app. Skimming a long note, the
- * colours tell you what kind of thing you are about to read before you read a
- * word of it — which is most of the value of having callouts at all.
- */
-const CALLOUTS: Record<CalloutKind, { label: string; icon: typeof Lightbulb; tint: Tint }> = {
-  concept: { label: 'Key concept', icon: KeyRound, tint: 'violet' },
-  intuition: { label: 'Intuition', icon: Lightbulb, tint: 'amber' },
-  memory: { label: 'Memory hook', icon: Brain, tint: 'pink' },
-  example: { label: 'In the real world', icon: Compass, tint: 'teal' },
-  walkthrough: { label: 'Walkthrough', icon: Route, tint: 'indigo' },
-  watchout: { label: 'Watch out', icon: TriangleAlert, tint: 'bad' },
-};
+import { Block } from './NoteBlocks';
+import { ReexplainMenu } from './ReexplainMenu';
 
 export function NotesPanel({ onOpenSettings }: { onOpenSettings: () => void }): React.JSX.Element {
   const { state, actions, needsKey } = useStudy();
@@ -141,7 +121,7 @@ export function NotesPanel({ onOpenSettings }: { onOpenSettings: () => void }): 
         {note ? (
           <NoteBody note={note} />
         ) : running ? (
-          <ExplainingState from={state.explain.from ?? slide} startedAt={state.explain.startedAt} onCancel={actions.cancelExplain} />
+          <ExplainingState job={state.explain} slide={slide} onCancel={actions.cancelExplain} />
         ) : (
           <NotExplainedYet slide={slide} needsKey={needsKey} onOpenSettings={onOpenSettings} />
         )}
@@ -151,8 +131,8 @@ export function NotesPanel({ onOpenSettings }: { onOpenSettings: () => void }): 
         <ReviewSetForSlide slide={slide} />
 
         {note && running ? (
-          <p className="mt-6 flex items-center justify-center gap-2 text-[12.5px] text-ink-2">
-            <Spinner /> Working through slide {state.explain.from ?? slide} onwards…
+          <p className="mt-6 flex items-center justify-center gap-2 text-[12.5px] text-ink-2" role="status">
+            <Spinner /> {describeRunning(state.explain, slide)}
           </p>
         ) : null}
       </div>
@@ -160,10 +140,24 @@ export function NotesPanel({ onOpenSettings }: { onOpenSettings: () => void }): 
   );
 }
 
+/** What a running job is doing, from where the reader is standing. */
+function describeRunning(job: ExplainJob, slide: number): string {
+  const from = job.from ?? slide;
+  if (job.mode === 'single') {
+    return from === slide
+      ? `Rewriting this slide as ${styleLabel(job.style ?? 'auto')}…`
+      : `Rewriting slide ${from} as ${styleLabel(job.style ?? 'auto')}…`;
+  }
+  if (job.mode === 'ahead') return `Explaining ahead from slide ${from}…`;
+  return `Working through slide ${from} onwards…`;
+}
+
 function NoteBody({ note }: { note: SlideNote }): React.JSX.Element {
-  const { state, actions } = useStudy();
+  const { state, actions, needsKey } = useStudy();
   const progress = slideProgress(state, note.slide);
   const hasPractice = progress.practiceTotal > 0;
+  const rewriting =
+    state.explain.status === 'running' && state.explain.mode === 'single' && state.explain.from === note.slide;
 
   return (
     <article>
@@ -174,6 +168,18 @@ function NoteBody({ note }: { note: SlideNote }): React.JSX.Element {
             <Chip tone={progress.practiceDone === progress.practiceTotal ? 'good' : 'amber'}>
               {progress.practiceDone}/{progress.practiceTotal} practice
             </Chip>
+          ) : null}
+          {/* Ask for this one slide again in another voice. Not on the demo, whose
+              notes are the fixture, and not without a key to ask with. */}
+          {!needsKey && !state.isDemo ? (
+            <div className="ml-auto">
+              <ReexplainMenu
+                currentStyle={state.style}
+                busy={rewriting}
+                disabled={state.explain.status === 'running'}
+                onPick={(style) => void actions.reexplainSlide(note.slide, style)}
+              />
+            </div>
           ) : null}
         </div>
         {note.summary ? (
@@ -307,60 +313,6 @@ function ReviewSetForSlide({ slide }: { slide: number }): React.JSX.Element | nu
   );
 }
 
-function CalloutLabel({
-  icon: Icon,
-  label,
-}: {
-  icon: typeof Lightbulb;
-  label: string;
-}): React.JSX.Element {
-  return (
-    <>
-      <span className="tint-chip flex h-5 w-5 shrink-0 items-center justify-center rounded-[7px]">
-        <Icon className="h-3 w-3" />
-      </span>
-      <span className="tint-text text-[12px] font-semibold uppercase tracking-[0.05em]">{label}</span>
-    </>
-  );
-}
-
-function Block({ block }: { block: ContentBlock }): React.JSX.Element {
-  if (block.type === 'markdown') return <Markdown>{block.content}</Markdown>;
-
-  const meta = CALLOUTS[block.callout];
-
-  // Memory hooks are worth more when you try to recall them first.
-  if (block.callout === 'memory') {
-    return (
-      <details
-        className={cx(
-          'group tint-card p-4 pl-5 [&_summary::-webkit-details-marker]:hidden',
-          TINT_CLASS[meta.tint],
-        )}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2">
-          <CalloutLabel icon={meta.icon} label={meta.label} />
-          <span className="tint-text ml-auto flex items-center gap-1 text-[11.5px] font-medium group-open:hidden">
-            <Eye className="h-3 w-3" /> Reveal
-          </span>
-        </summary>
-        <div className="mt-2.5">
-          <Markdown>{block.content}</Markdown>
-        </div>
-      </details>
-    );
-  }
-
-  return (
-    <aside className={cx('tint-card p-4 pl-5', TINT_CLASS[meta.tint])}>
-      <p className="mb-2 flex items-center gap-2">
-        <CalloutLabel icon={meta.icon} label={meta.label} />
-      </p>
-      <Markdown>{block.content}</Markdown>
-    </aside>
-  );
-}
-
 /** Live elapsed time for a running job. Honest about how long this is taking. */
 function useElapsed(startedAt: number | null): string | null {
   const [label, setLabel] = useState<string | null>(null);
@@ -379,22 +331,25 @@ function useElapsed(startedAt: number | null): string | null {
 }
 
 function ExplainingState({
-  from,
-  startedAt,
+  job,
+  slide,
   onCancel,
 }: {
-  from: number;
-  startedAt: number | null;
+  job: ExplainJob;
+  slide: number;
   onCancel: () => void;
 }): React.JSX.Element {
-  const elapsed = useElapsed(startedAt);
+  const elapsed = useElapsed(job.startedAt);
+  const from = job.from ?? slide;
+  const label =
+    job.mode === 'ahead' && from > slide ? `Explaining ahead from slide ${from}` : `Reading slide ${from} onwards`;
 
   return (
     <div>
       <div className="mb-5 flex items-center justify-between gap-3 rounded-[14px] bg-surface-2 px-3.5 py-2.5">
         <p className="flex items-center gap-2 text-[13px] text-ink-2">
           <Spinner />
-          Reading slide {from} onwards
+          {label}
           {elapsed ? <span className="tabular-nums text-ink-3">· {elapsed}</span> : null}
         </p>
         <Button size="sm" variant="quiet" onClick={onCancel}>
@@ -417,6 +372,18 @@ function NotExplainedYet({
 }): React.JSX.Element {
   const { state, actions } = useStudy();
   const explainedCount = Object.keys(state.notes).length;
+  /* Read-ahead is about to fetch this one: it is idle only while it waits out
+     the model's pacing. Say so, rather than presenting a button the app is
+     about to press for you. */
+  const gap = nextGapFrom(state, slide);
+  const queued =
+    state.readAhead &&
+    !needsKey &&
+    !state.isDemo &&
+    explainedCount > 0 &&
+    state.explain.status === 'idle' &&
+    gap !== null &&
+    gap - slide <= READ_AHEAD_DISTANCE;
 
   return (
     <EmptyState
@@ -427,7 +394,9 @@ function NotExplainedYet({
       description={
         explainedCount === 0
           ? `${plural(state.totalSlides, 'slide')} ready. Notes are generated in small batches so you can start reading within seconds.`
-          : 'Generating from here continues in small batches, keeping each explanation deep.'
+          : queued
+            ? 'Read-ahead is fetching this one next. Notes arrive on their own as you get close to them.'
+            : 'Generating from here continues in small batches, keeping each explanation deep.'
       }
       action={
         needsKey ? (
@@ -439,7 +408,7 @@ function NotExplainedYet({
           </div>
         ) : (
           <Button block variant="primary" icon={<Sparkles className="h-4 w-4" />} onClick={() => void actions.explainFrom(slide)}>
-            {explainedCount === 0 ? 'Explain this deck' : `Explain from slide ${slide}`}
+            {explainedCount === 0 ? 'Explain this deck' : queued ? `Explain slide ${slide} now` : `Explain from slide ${slide}`}
           </Button>
         )
       }

@@ -7,17 +7,28 @@ import { useStudy } from '../state/StudyContext';
 import { IconButton } from '../components/ui/Button';
 import { usePdf } from './PdfContext';
 
+/** The most slides one batch can cover, mirrored from the server's `MAX_BATCH`. */
+const BATCH_REACH = 12;
+
 /**
  * Slide thumbnails. Renders every page but only rasterises the ones near the
  * viewport, so a 300-slide deck costs no more than a 10-slide one on open.
+ *
+ * Beside each thumbnail runs one segment of a progress rail. It fills in as
+ * notes land, and shimmers over the slides a running batch is likely to cover,
+ * so the shape of what is explained — and what is being explained right now —
+ * can be read off the strip without opening a single note.
  */
 export function Filmstrip({
   orientation,
   onCollapse,
+  compact = false,
 }: {
   orientation: 'vertical' | 'horizontal';
   /** Renders a hide control on the strip itself, where people look for it. */
   onCollapse?: () => void;
+  /** Smaller thumbnails, for a strip that shares a phone screen with the notes. */
+  compact?: boolean;
 }): React.JSX.Element {
   const { state, actions } = useStudy();
   const activeRef = useRef<HTMLButtonElement | null>(null);
@@ -55,6 +66,14 @@ export function Filmstrip({
   const pages = Array.from({ length: Math.max(0, state.totalSlides) }, (_, index) => index + 1);
   const explained = pages.filter((page) => slideProgress(state, page).explained).length;
 
+  /* The slides a running batch may land on: from its start, as far as a batch reaches. */
+  const job = state.explain;
+  const inFlight = (page: number): boolean =>
+    job.status === 'running' &&
+    job.from !== null &&
+    page >= job.from &&
+    (job.mode === 'single' ? page === job.from : page < job.from + BATCH_REACH);
+
   const list = (
     <div
       ref={listRef}
@@ -66,14 +85,26 @@ export function Filmstrip({
         'scroll-area',
         vertical
           ? 'flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2.5 pb-2.5'
-          : 'flex w-full gap-2 overflow-x-auto border-t border-line p-2.5',
+          : cx('flex w-full gap-2 overflow-x-auto border-t border-line', compact ? 'p-2' : 'p-2.5'),
       )}
     >
       {pages.map((page) => {
         const progress = slideProgress(state, page);
         const active = page === state.currentSlide;
         const complete = progress.practiceTotal > 0 && progress.practiceDone === progress.practiceTotal;
-        return (
+        const pending = !progress.explained && inFlight(page);
+        const rail = (
+          <span
+            aria-hidden="true"
+            data-rail={progress.explained ? 'explained' : pending ? 'pending' : 'empty'}
+            className={cx(
+              'shrink-0 rounded-full transition-colors duration-500',
+              vertical ? 'w-[3px] self-stretch' : 'h-[3px] w-full',
+              progress.explained ? (complete ? 'bg-good' : 'bg-violet') : pending ? 'animate-pulse bg-violet/45' : 'bg-line',
+            )}
+          />
+        );
+        const button = (
           <button
             key={page}
             ref={active ? activeRef : undefined}
@@ -81,11 +112,11 @@ export function Filmstrip({
             role="tab"
             aria-selected={active}
             tabIndex={active ? 0 : -1}
-            aria-label={`Slide ${page}${progress.explained ? ', explained' : ''}${complete ? ', practice complete' : ''}`}
+            aria-label={`Slide ${page}${progress.explained ? ', explained' : pending ? ', being explained' : ''}${complete ? ', practice complete' : ''}`}
             onClick={() => actions.goto(page)}
             className={cx(
-              'group relative shrink-0 overflow-hidden rounded-[10px] border text-left transition-[border-color,box-shadow,transform] duration-150',
-              vertical ? 'w-full' : 'w-[132px]',
+              'group relative min-w-0 shrink-0 overflow-hidden rounded-[10px] border text-left transition-[border-color,box-shadow,transform] duration-150',
+              vertical ? 'flex-1' : compact ? 'w-[104px]' : 'w-[132px]',
               active
                 ? 'border-violet ring-2 ring-violet-soft'
                 : progress.explained
@@ -109,6 +140,17 @@ export function Filmstrip({
               </span>
             ) : null}
           </button>
+        );
+        return vertical ? (
+          <div key={page} className="flex items-stretch gap-1.5">
+            {rail}
+            {button}
+          </div>
+        ) : (
+          <div key={page} className={cx('flex shrink-0 flex-col gap-1', compact ? 'w-[104px]' : 'w-[132px]')}>
+            {button}
+            {rail}
+          </div>
         );
       })}
     </div>
